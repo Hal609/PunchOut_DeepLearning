@@ -1,6 +1,8 @@
 import sys
+import math
 import random
 import matplotlib.pyplot as plt
+from utils import *
 
 sys.path.append("../")
 from BaseClasses.SDPModel import SDPModel
@@ -65,41 +67,39 @@ from collections import deque
 class DQN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(DQN, self).__init__()
-        self.fc1 = nn.Linear(n_observations, 512)  # Input is the set of ram values
-        self.fc2 = nn.Linear(512, 512)
-        self.fc3 = nn.Linear(512, 512)
-        self.fc4 = nn.Linear(512, 512)
-        self.fc5 = nn.Linear(512, n_actions)  # Output is the Q-value for each action (RIGHT, LEFT, DOWN, UP, START, SELECT", B, A)
+        self.fc1 = nn.Linear(n_observations, 256)  # Input is the set of ram values
+        self.fc2 = nn.Linear(256, 256)
+        self.fc3 = nn.Linear(256, n_actions)  # Output is the Q-value for each action (RIGHT, LEFT, DOWN, UP, START, SELECT", B, A)
 
     def forward(self, x):
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc4(x))
-        return self.fc5(x)
+        return self.fc3(x)
 
 # Agent class for DQN
 class DQNAgent(SDPPolicy):
     def __init__(self, model: SDPModel, policy_name: str = "Deep Q Agent"):
         super().__init__(model, policy_name)
 
+        self.device = global_device
+
         # Get the number of state observations
         n_observations = len(model.state_names)
         n_actions = 2**len(model.decision_names) # 2 to the power of num buttons to capture all combos of buttons
 
-        self.qmodel = DQN(n_observations, n_actions)
-        self.target_qmodel = DQN(n_observations, n_actions)  # Target network for stable training
+        self.qmodel = DQN(n_observations, n_actions).to(self.device)
+        self.target_qmodel = DQN(n_observations, n_actions).to(self.device)  # Target network for stable training
         self.target_qmodel.load_state_dict(self.qmodel.state_dict())
         self.optimizer = optim.Adam(self.qmodel.parameters(), lr=0.001)
         self.loss_fn = nn.MSELoss()
-        self.memory = deque(maxlen=100000)
-        self.gamma = 0.999  # Discount factor
-        self.epsilon = 1.0  # Exploration rate
-        self.epsilon_decay = 0.99
-        self.epsilon_min = 0.01
-        self.batch_size = 64
-        self.update_target_every = 8
-        self.steps = 0
+        self.memory = deque(maxlen=10000)
+        self.gamma = 0.99995  # Discount factor
+        self.epsilon = 1.0 # Exploration rate
+        self.epsilon_decay = 0.99999
+        self.epsilon_min = 0.1
+        self.batch_size = 32
+        self.update_target_every = 60
+        self.steps_done = 0
 
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
@@ -109,7 +109,7 @@ class DQNAgent(SDPPolicy):
         RUN ONCE TRAINED.
         Returns the decision from the trained model.
         '''
-        state = torch.FloatTensor(state).unsqueeze(0)
+        state = torch.tensor(state, device=self.device).unsqueeze(0)
         q_values = self.model(state)
         best_action = torch.argmax(q_values).item()  # Choose action with highest Q-value (exploit)
         action_name = ["RIGHT", "LEFT", "DOWN", "UP", "START", "SELECT", "B", "A"][best_action]
@@ -117,7 +117,7 @@ class DQNAgent(SDPPolicy):
         action_dict[action_name] = 1
 
         return action_dict
-    
+        
     def act(self, state):
         '''
         Returns an integer representing multiple simultaneous inputs based on Q-values.
@@ -126,8 +126,7 @@ class DQNAgent(SDPPolicy):
             return random.randint(0, 255)
 
         # Exploitation: Use Q-values to make decisions
-        state = torch.FloatTensor(state).unsqueeze(0)
-        q_values = self.qmodel(state)
+        q_values = self.qmodel(state) # Get q values for each action based on current state
         return torch.argmax(q_values).item()  # Choose action with highest Q-value (exploit)
 
     def action_dict_to_num(self, action_dict):
@@ -154,26 +153,43 @@ class DQNAgent(SDPPolicy):
         if len(self.memory) < self.batch_size:
             return
 
-        self.model.reset(reset_prng=False) # Reload save state in emulator
-
         batch = random.sample(self.memory, self.batch_size)
-        for state, action, reward, next_state, done in batch:
-            state = torch.FloatTensor(state).unsqueeze(0)
-            next_state = torch.FloatTensor(next_state).unsqueeze(0)
-            target = self.qmodel(state)
-            with torch.no_grad():
-                target_next = self.target_qmodel(next_state)
+        states, actions, rewards, next_states, dones = zip(*batch)
 
-            target[0][action] = reward + (self.gamma * torch.max(target_next)) * (1 - done)
+        # Convert to tensors and move to device
+        states = torch.stack([torch.tensor(s, dtype=torch.float32) if not isinstance(s, torch.Tensor) else s.float() for s in states]).to(self.device)
+        next_states = torch.stack([torch.tensor(s, dtype=torch.float32) if not isinstance(s, torch.Tensor) else s.float() for s in next_states]).to(self.device)
+        actions = torch.tensor(actions, dtype=torch.long, device=self.device)
+        rewards = torch.tensor(rewards, dtype=torch.float32, device=self.device)
+        dones = torch.tensor(dones, dtype=torch.float32, device=self.device)
 
-            self.optimizer.zero_grad()
-            loss = self.loss_fn(self.qmodel(state), target)
-            loss.backward()
-            self.optimizer.step()
+        # Compute Q-values for current states
+        q_values = self.qmodel(states)  # Shape: [batch_size, n_actions]
 
+        # Compute target Q-values for next states
+        with torch.no_grad():
+            next_q_values = self.target_qmodel(next_states)  # Shape: [batch_size, n_actions]
+            max_next_q_values, _ = torch.max(next_q_values, dim=1)  # Shape: [batch_size]
+
+        # Compute target Q-values
+        target_q_values = rewards + (self.gamma * max_next_q_values) * (1 - dones)  # Shape: [batch_size]
+
+        # Gather the Q-values corresponding to the actions taken
+        q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)  # Shape: [batch_size]
+
+        # Compute loss
+        loss = self.loss_fn(q_value, target_q_values)
+
+        # Optimize the model
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        # Update epsilon
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
-
+            self.model.game.training_epsilon = round(self.epsilon, 3)
+           
     def update_target_network(self):
         self.target_qmodel.load_state_dict(self.qmodel.state_dict())
 
@@ -184,7 +200,6 @@ class DQNAgent(SDPPolicy):
         total_rewards = []
         # Training loop
         for episode in range(n_episodes):
-            self.model.game.training_epsilon = round(self.epsilon, 3)
             done = False
             total_reward = 0
 
@@ -201,15 +216,19 @@ class DQNAgent(SDPPolicy):
                 self.model.state = next_state
                 total_reward += reward
 
+                if not 0.1 < reward < -0.1:
+                    self.replay()
+                    if episode % self.update_target_every == 0:
+                        self.update_target_network()
+
                 if done: 
-                    self.model.game.debug_print(f"Episode {episode}: total reward = {int(total_reward)}")
-                    total_rewards.append(total_reward)
+                    tot = float(total_reward)
+                    total_rewards.append(tot)
+                    self.model.game.debug_print(f"{episode}: Total reward = {int(tot)} Ave of last 10: {round(sum(total_rewards[-10:])/10, 2)}, Ave first 10: {round(sum(total_rewards[:10])/10, 2)}")
                     break
 
-            self.replay()
-            if episode % self.update_target_every == 0:
-                self.update_target_network()
-            
+            self.model.reset(reset_prng=False)
+                
         plt.plot(range(len(total_rewards)), total_rewards)
         plt.show()
 
