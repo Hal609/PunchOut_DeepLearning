@@ -63,10 +63,33 @@ import torch.optim as optim
 import numpy as np
 from collections import deque
 
-# Define the Q-Network
 class DQN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(DQN, self).__init__()
+
+        self.conv1 = nn.Sequential(nn.Linear(n_observations, 128), nn.ReLU(inplace=True))
+        self.conv2 = nn.Sequential(nn.Linear(128, 128), nn.ReLU(inplace=True))
+        self.conv3 = nn.Sequential(nn.Linear(128, n_actions))
+
+        self._create_weights()
+
+    def _create_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+
+        return x
+    
+# Define the Q-Network
+class DQN_old(nn.Module):
+    def __init__(self, n_observations, n_actions):
+        super(DQN_old, self).__init__()
         self.fc1 = nn.Linear(n_observations, 256)  # Input is the set of ram values
         self.fc2 = nn.Linear(256, 256)
         self.fc3 = nn.Linear(256, n_actions)  # Output is the Q-value for each action (RIGHT, LEFT, DOWN, UP, START, SELECT", B, A)
@@ -90,19 +113,26 @@ class DQNAgent(SDPPolicy):
         self.qmodel = DQN(n_observations, n_actions).to(self.device)
         self.target_qmodel = DQN(n_observations, n_actions).to(self.device)  # Target network for stable training
         self.target_qmodel.load_state_dict(self.qmodel.state_dict())
-        self.optimizer = optim.Adam(self.qmodel.parameters(), lr=0.001)
+        self.optimizer = optim.Adam(self.qmodel.parameters(), lr=0.0001)
+        self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=1000, gamma=0.1)
         self.loss_fn = nn.MSELoss()
-        self.memory = deque(maxlen=10000)
-        self.gamma = 0.99995  # Discount factor
+        self.max_memory_size = 5000
+        self.memory = [None] * self.max_memory_size
+        self.memory_index = 0
+        self.memory_full = False
+        self.gamma = 0.9995  # Discount factor
         self.epsilon = 1.0 # Exploration rate
-        self.epsilon_decay = 0.99999
+        self.epsilon_decay = 0.9
         self.epsilon_min = 0.1
-        self.batch_size = 32
-        self.update_target_every = 60
+        self.batch_size = 64
+        self.update_target_every = 1000
         self.steps_done = 0
 
-    def remember(self, state, action, reward, next_state, done):
-        self.memory.append((state, action, reward, next_state, done))
+    def remember(self, state, action, reward, next_state, done):       
+        self.memory[self.memory_index] = (state, action, reward, next_state, done)
+        self.memory_index = (self.memory_index + 1) % self.max_memory_size
+        if self.memory_index == 0:
+            self.memory_full = True
 
     def get_decision(self, state):
         '''
@@ -150,15 +180,16 @@ class DQNAgent(SDPPolicy):
         return action_dict
 
     def replay(self):
-        if len(self.memory) < self.batch_size:
+        memory_size = self.max_memory_size if self.memory_full else self.memory_index
+        if memory_size < self.batch_size:
             return
 
-        batch = random.sample(self.memory, self.batch_size)
+        batch = random.sample(self.memory[:memory_size], self.batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
 
         # Convert to tensors and move to device
-        states = torch.stack([torch.tensor(s, dtype=torch.float32) if not isinstance(s, torch.Tensor) else s.float() for s in states]).to(self.device)
-        next_states = torch.stack([torch.tensor(s, dtype=torch.float32) if not isinstance(s, torch.Tensor) else s.float() for s in next_states]).to(self.device)
+        states = torch.stack(states).to(self.device)
+        next_states = torch.stack(next_states).to(self.device)
         actions = torch.tensor(actions, dtype=torch.long, device=self.device)
         rewards = torch.tensor(rewards, dtype=torch.float32, device=self.device)
         dones = torch.tensor(dones, dtype=torch.float32, device=self.device)
@@ -179,16 +210,13 @@ class DQNAgent(SDPPolicy):
 
         # Compute loss
         loss = self.loss_fn(q_value, target_q_values)
+        # self.model.game.debug_print(f"Loss: {float(loss)}")
 
         # Optimize the model
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-
-        # Update epsilon
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
-            self.model.game.training_epsilon = round(self.epsilon, 3)
+        # self.scheduler.step()
            
     def update_target_network(self):
         self.target_qmodel.load_state_dict(self.qmodel.state_dict())
@@ -202,8 +230,10 @@ class DQNAgent(SDPPolicy):
         for episode in range(n_episodes):
             done = False
             total_reward = 0
-
+            frame_num = 0
             while not done:
+                frame_num += 1
+
                 action = self.act(self.model.state)
                 decision_dict = self.action_num_to_dict(action)
                 self.model.step_emu(decision_dict)
@@ -216,20 +246,27 @@ class DQNAgent(SDPPolicy):
                 self.model.state = next_state
                 total_reward += reward
 
-                if not 0.1 < reward < -0.1:
+                if frame_num % 6 == 0:
                     self.replay()
-                    if episode % self.update_target_every == 0:
-                        self.update_target_network()
 
+                if frame_num % self.update_target_every == 0:
+                    self.update_target_network()
+                    print("Target Updated")
+
+                if frame_num % 1200 == 0:
+                    # Update epsilon
+                    if self.epsilon > self.epsilon_min:
+                        self.epsilon *= self.epsilon_decay
+                        self.model.game.training_epsilon = round(self.epsilon, 3)
                 if done: 
                     tot = float(total_reward)
                     total_rewards.append(tot)
-                    self.model.game.debug_print(f"{episode}: Total reward = {int(tot)} Ave of last 10: {round(sum(total_rewards[-10:])/10, 2)}, Ave first 10: {round(sum(total_rewards[:10])/10, 2)}")
+                    self.model.game.debug_print(f"{episode}: Total reward = {round(tot, 3)} Ave of last 10: {round(sum(total_rewards[-10:])/10, 2)}, Ave first 10: {round(sum(total_rewards[:10])/10, 2)}")
                     break
 
             self.model.reset(reset_prng=False)
                 
-        plt.plot(range(len(total_rewards)), total_rewards)
+        plt.plot(np.arange(0, len(total_rewards)), total_rewards)
         plt.show()
 
     def run_policy(self, n_iterations: int = 1):

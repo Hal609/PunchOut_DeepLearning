@@ -21,7 +21,7 @@ class PunchOutModel(SDPModel):
         self.state_names += [f"Pixel{num}" for num in range(21*21)]
         decision_names = ["RIGHT", "LEFT", "DOWN", "UP", "START", "SELECT", "B", "A"]
 
-        self.game = NESWindow(rom_path="punch.nes", font_path="droid_mono.ttf", headless=headless, show_debug=show_debug)
+        self.game = NESWindow(rom_path="punch.nes", headless=headless, show_debug=show_debug)
         self.game.setup()
 
         self.fight_start = None
@@ -36,11 +36,11 @@ class PunchOutModel(SDPModel):
         super().__init__(self.state_names, decision_names, S0, T, seed)
     
     def get_state_val(self, value_string):
-        return float(self.state[self.state_names.index(value_string)])
+        return self.state[self.state_names.index(value_string)]
 
     def build_state(self, info: dict):
         # Extract state values in the correct order
-        state_values = [float(info[key]) for key in self.state_names]
+        state_values = [(info[key]) for key in self.state_names]
         # Create tensor directly from the list of values
         next_state = torch.tensor(state_values, dtype=torch.float32, device=global_device)
         return next_state
@@ -52,8 +52,8 @@ class PunchOutModel(SDPModel):
         """
         if self.fight_start is not None:
             if self.get_state_val("Mac_Losses") > 0: return True
-            # if self.get_state_val("Mac_Knocked_Down_Count") > 0: return True
-            # if self.get_state_val("Current_Round") > 1: return True
+            if self.get_state_val("Mac_Knocked_Down_Count") > 0: return True
+            if self.get_state_val("Current_Round") > 1/255: return True
         return False
             
     def exog_info_fn(self, decision):
@@ -66,7 +66,7 @@ class PunchOutModel(SDPModel):
                 n += 1
 
         for key in self.ram_dict.keys():
-            new_values[key] = self.game.nes[self.ram_dict[key]]
+            new_values[key] = self.game.nes[self.ram_dict[key]]/255
         return new_values
     
     def transition_fn(self, decision):
@@ -78,37 +78,43 @@ class PunchOutModel(SDPModel):
         return new_state
     
     def check_and_save(self, state):
-        if state[self.state_names.index("Global_Variable_for_Enemy_Actions")] == 115 and self.fight_start is None:
+        if state[self.state_names.index("Global_Variable_for_Enemy_Actions")] == 115/255 and self.fight_start is None:
             self.fight_start = self.game.nes.save()
 
     def objective_fn(self, decision, exog_info):
         value = 0
-        if self.fight_start is None or exog_info["Fight_Started_1_fight_started_0_between_rounds"] == 0: return value
+        if self.fight_start is None or exog_info["Fight_Started_1_fight_started_0_between_rounds"] == 0.0: return value
 
         # Reward deliberate play i.e. not spamming the controller.
         # input_count = str(decision.values()).count("1")
         # if input_count <= 2:
         #     value += 0.05
 
-        value += 1000 * (exog_info["Opponent_ID"] > self.get_state_val("Opponent_ID"))
+        value += 800 * float(exog_info["Opponent_ID"] > self.get_state_val("Opponent_ID"))
         if exog_info["Clock_Seconds"] > self.get_state_val("Clock_Seconds"):
             value -= 0.1
         if exog_info["Tens_Digit_of_Score"] != self.get_state_val("Tens_Digit_of_Score"):
-            value += 30
+            value += 3
         if exog_info["Hundreds_Digit_of_Score"] > self.get_state_val("Hundreds_Digit_of_Score"):
-            value += 100
+            value += 10
         if exog_info["Thousands_Digit_of_Score"] > self.get_state_val("Thousands_Digit_of_Score"):
-            value += 200
-        if exog_info["Hearts_1s_place"] < self.get_state_val("Hearts_1s_place"):
-            value -= 2
-        health_change = exog_info["Macs_Health"] - self.get_state_val("Macs_Health")
+            value += 20
+        if exog_info["Hearts_1s_place"] != self.get_state_val("Hearts_1s_place"):
+            value -= 1
+        if exog_info["Hearts_10s_place"] > self.get_state_val("Hearts_10s_place"):
+            value += 5
+        if exog_info["Mac_Knocked_Down_Count"] > self.get_state_val("Mac_Knocked_Down_Count"):
+            value -= 20
+        health_change = exog_info["Macs_Health"]*255 - self.get_state_val("Macs_Health")*255
 
         if health_change < 0:
-            value += health_change
+            value += float(1.5 * health_change)
+
+        value = value / 10
 
         self.total_reward += value
 
-        self.game.reward_view_string = f"\nReward = {round(value, 2)}, Total reward = {int(self.total_reward)}"
+        self.game.reward_view_string = f"\nReward = {round(value, 10)}, Total reward = {round(self.total_reward, 3)}"
 
         return value
     

@@ -51,6 +51,7 @@ class NESWindow():
 
     def format_text(self):
         self.debug_text = f"fps = {self.frame_rate:.0f}\n\n"
+        print("Debug text:", self.debug_text)
 
         self.debug_text += f"INPUT\n====="
         self.debug_text += str(self.inputs)
@@ -131,6 +132,7 @@ class NESWindow():
                     wrapped_lines.append(' '.join(current_line))
 
             return wrapped_lines
+        
         if text == "": return
                 
         # Wrap the text to ensure each line fits within max_chars
@@ -184,7 +186,7 @@ class NESWindow():
 
         if self.show_debug: sdl2.SDL_RaiseWindow(self.window.window)
 
-    def clean_up(self, signum=None, frame=None):
+    def clean_up(self):
         print("Cleaning up SDL resources...")
         if self.debug_font:
             sdlttf.TTF_CloseFont(self.debug_font)
@@ -224,8 +226,8 @@ class NESWindow():
                     return
                 
             current_time = time.perf_counter()
+            if current_time - self.last_debug_update >= 0.05:
 
-            if abs(current_time - self.last_debug_update) >= 0.05:
                 # Clear the renderer with a black background
                 self.sdl_renderer.clear(sdl2.ext.Color(0, 0, 0))
 
