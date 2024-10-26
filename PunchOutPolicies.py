@@ -63,33 +63,10 @@ import torch.optim as optim
 import numpy as np
 from collections import deque
 
+# Define the Q-Network
 class DQN(nn.Module):
     def __init__(self, n_observations, n_actions):
         super(DQN, self).__init__()
-
-        self.conv1 = nn.Sequential(nn.Linear(n_observations, 128), nn.ReLU(inplace=True))
-        self.conv2 = nn.Sequential(nn.Linear(128, 128), nn.ReLU(inplace=True))
-        self.conv3 = nn.Sequential(nn.Linear(128, n_actions))
-
-        self._create_weights()
-
-    def _create_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                nn.init.constant_(m.bias, 0)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.conv3(x)
-
-        return x
-    
-# Define the Q-Network
-class DQN_old(nn.Module):
-    def __init__(self, n_observations, n_actions):
-        super(DQN_old, self).__init__()
         self.fc1 = nn.Linear(n_observations, 256)  # Input is the set of ram values
         self.fc2 = nn.Linear(256, 256)
         self.fc3 = nn.Linear(256, n_actions)  # Output is the Q-value for each action (RIGHT, LEFT, DOWN, UP, START, SELECT", B, A)
@@ -110,19 +87,19 @@ class DQNAgent(SDPPolicy):
         n_observations = len(model.state_names)
         n_actions = 2**len(model.decision_names) # 2 to the power of num buttons to capture all combos of buttons
 
-        self.qmodel = DQN(n_observations, n_actions).to(self.device)
-        self.target_qmodel = DQN(n_observations, n_actions).to(self.device)  # Target network for stable training
-        self.target_qmodel.load_state_dict(self.qmodel.state_dict())
-        self.optimizer = optim.Adam(self.qmodel.parameters(), lr=0.0001)
+        self.policy_net = DQN(n_observations, n_actions).to(self.device)
+        self.target_net = DQN(n_observations, n_actions).to(self.device)  # Target network for stable training
+        self.target_net.load_state_dict(self.policy_net.state_dict())
+        self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=0.0001, amsgrad=True)
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=1000, gamma=0.1)
         self.loss_fn = nn.MSELoss()
-        self.max_memory_size = 5000
+        self.max_memory_size = 30000
         self.memory = [None] * self.max_memory_size
         self.memory_index = 0
         self.memory_full = False
-        self.gamma = 0.9995  # Discount factor
+        self.gamma = 0.99995  # Discount factor
         self.epsilon = 1.0 # Exploration rate
-        self.epsilon_decay = 0.9
+        self.epsilon_decay = 0.999
         self.epsilon_min = 0.1
         self.batch_size = 64
         self.update_target_every = 1000
@@ -156,8 +133,9 @@ class DQNAgent(SDPPolicy):
             return random.randint(0, 255)
 
         # Exploitation: Use Q-values to make decisions
-        q_values = self.qmodel(state) # Get q values for each action based on current state
-        return torch.argmax(q_values).item()  # Choose action with highest Q-value (exploit)
+        with torch.no_grad():
+            q_values = self.policy_net(state) # Get q values for each action based on current state
+            return torch.argmax(q_values).item()  # Choose action with highest Q-value (exploit)
 
     def action_dict_to_num(self, action_dict):
         # Encoding the action dictionary into a single integer
@@ -195,11 +173,11 @@ class DQNAgent(SDPPolicy):
         dones = torch.tensor(dones, dtype=torch.float32, device=self.device)
 
         # Compute Q-values for current states
-        q_values = self.qmodel(states)  # Shape: [batch_size, n_actions]
+        q_values = self.policy_net(states)  # Shape: [batch_size, n_actions]
 
         # Compute target Q-values for next states
         with torch.no_grad():
-            next_q_values = self.target_qmodel(next_states)  # Shape: [batch_size, n_actions]
+            next_q_values = self.target_net(next_states)  # Shape: [batch_size, n_actions]
             max_next_q_values, _ = torch.max(next_q_values, dim=1)  # Shape: [batch_size]
 
         # Compute target Q-values
@@ -209,8 +187,10 @@ class DQNAgent(SDPPolicy):
         q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)  # Shape: [batch_size]
 
         # Compute loss
-        loss = self.loss_fn(q_value, target_q_values)
-        # self.model.game.debug_print(f"Loss: {float(loss)}")
+        criterion = nn.SmoothL1Loss()
+        loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+        # loss = self.loss_fn(q_value, target_q_values)
+        self.model.game.debug_print(f"Loss: {float(loss)}")
 
         # Optimize the model
         self.optimizer.zero_grad()
@@ -219,7 +199,7 @@ class DQNAgent(SDPPolicy):
         # self.scheduler.step()
            
     def update_target_network(self):
-        self.target_qmodel.load_state_dict(self.qmodel.state_dict())
+        self.target_net.load_state_dict(self.policy_net.state_dict())
 
     def train_agent(self, n_episodes):
         '''
@@ -246,12 +226,13 @@ class DQNAgent(SDPPolicy):
                 self.model.state = next_state
                 total_reward += reward
 
-                if frame_num % 6 == 0:
-                    self.replay()
+                # if frame_num % 1 == 0:
+                # for i in range(5):
+                self.replay()
 
                 if frame_num % self.update_target_every == 0:
                     self.update_target_network()
-                    print("Target Updated")
+                    print("Target updated")
 
                 if frame_num % 1200 == 0:
                     # Update epsilon

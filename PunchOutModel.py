@@ -96,9 +96,9 @@ class PunchOutModel(SDPModel):
         if exog_info["Tens_Digit_of_Score"] != self.get_state_val("Tens_Digit_of_Score"):
             value += 3
         if exog_info["Hundreds_Digit_of_Score"] > self.get_state_val("Hundreds_Digit_of_Score"):
-            value += 10
-        if exog_info["Thousands_Digit_of_Score"] > self.get_state_val("Thousands_Digit_of_Score"):
             value += 20
+        if exog_info["Thousands_Digit_of_Score"] > self.get_state_val("Thousands_Digit_of_Score"):
+            value += 100
         if exog_info["Hearts_1s_place"] != self.get_state_val("Hearts_1s_place"):
             value -= 1
         if exog_info["Hearts_10s_place"] > self.get_state_val("Hearts_10s_place"):
@@ -110,7 +110,7 @@ class PunchOutModel(SDPModel):
         if health_change < 0:
             value += float(1.5 * health_change)
 
-        value = value / 10
+        value = value / 50
 
         self.total_reward += value
 
