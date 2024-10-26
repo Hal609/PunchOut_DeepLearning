@@ -92,7 +92,6 @@ class DQNAgent(SDPPolicy):
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=0.0001, amsgrad=True)
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=1000, gamma=0.1)
-        self.loss_fn = nn.MSELoss()
         self.max_memory_size = 30000
         self.memory = [None] * self.max_memory_size
         self.memory_index = 0
@@ -102,7 +101,7 @@ class DQNAgent(SDPPolicy):
         self.epsilon_decay = 0.999
         self.epsilon_min = 0.1
         self.batch_size = 64
-        self.update_target_every = 1000
+        self.update_target_every = 10000
         self.steps_done = 0
 
     def remember(self, state, action, reward, next_state, done):       
@@ -188,15 +187,15 @@ class DQNAgent(SDPPolicy):
 
         # Compute loss
         criterion = nn.SmoothL1Loss()
-        loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
-        # loss = self.loss_fn(q_value, target_q_values)
+        loss = criterion(q_value, target_q_values)
+        # loss = nn.MSELoss(q_value, target_q_values)
         self.model.game.debug_print(f"Loss: {float(loss)}")
 
         # Optimize the model
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        # self.scheduler.step()
+        self.scheduler.step()
            
     def update_target_network(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())

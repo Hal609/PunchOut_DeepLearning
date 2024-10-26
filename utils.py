@@ -50,7 +50,7 @@ def process_frame_buffer(frame):
     
     resized = cv2.resize(gray_image, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
 
-    cv2.imwrite("output.bmp", resized)
+    # cv2.imwrite("output.bmp", resized)
     # Normalize pixel values to [0, 1]
     normalized_image = resized.astype(np.float32) / 255.0
 

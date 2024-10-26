@@ -14,15 +14,25 @@ from utils import *
 from numpy.typing import NDArray
 import numpy as np
 from typing import Optional
+import platform
 
 class NESWindow():
     def __init__(self, rom_path, headless=False, show_debug=True):
         self.rom_path = rom_path
         self.font_path = "droid_mono.ttf"
-        self.font_size = 8
-        self.scale_factor = 3
         self.headless = headless
         self.show_debug = show_debug
+
+        if platform.system() == "Darwin":
+            self.font_size = 20
+            self.scale_factor = 2
+            self.font_scale = 1
+            self.window_size = (450, 800)
+        else:
+            self.font_size = 8
+            self.scale_factor = 3
+            self.font_scale = 3
+            self.window_size = (350, 650)
         
         self.nes = None
         self.frame:Optional[NDArray[np.uint8]]
@@ -80,7 +90,7 @@ class NESWindow():
             self.debug_live_text = self.debug_live_text[self.debug_live_text.find("\n", 1):]
         self.debug_live_text += "\n" + text
     
-    def create_debug_window(self, title="Debug Window", width=350, height=650):
+    def create_debug_window(self, title="Debug Window"):
         sdl2.SDL_SetHint(sdl2.SDL_HINT_WINDOWS_DPI_SCALING, b"1")
 
         sdl2.ext.init()
@@ -91,18 +101,18 @@ class NESWindow():
             raise GenericError(f"SDL2_ttf initialization error: {sdl2.SDL_GetError().decode("utf-8")}")
         
         # Load a font for rendering text
-        font = sdlttf.TTF_OpenFont(self.font_path.encode('utf-8'), self.font_size * self.scale_factor)
+        font = sdlttf.TTF_OpenFont(self.font_path.encode('utf-8'), self.font_size * self.font_scale)
 
         if font is None:
             raise GenericError(f"Failed to load font. SDL2 error: {sdl2.SDL_GetError().decode("utf-8")}")
         
         # Create a window for debugging information
-        window = sdl2.ext.Window(title, size=(width, height), position=(50, 50))
+        window = sdl2.ext.Window(title, size=self.window_size, position=(50, 50), flags=sdl2.SDL_WINDOW_ALLOW_HIGHDPI)
         window.show()
 
         # Create a renderer
         renderer = sdl2.ext.Renderer(window)
-        renderer.logical_size = (width * self.scale_factor, height* self.scale_factor)
+        renderer.logical_size = tuple(i * self.scale_factor for i in self.window_size)
         
         return window, renderer, font
 
@@ -164,7 +174,7 @@ class NESWindow():
             w, h = surface.contents.w, surface.contents.h
 
             # Create a destination rect for rendering, adjusting y position for each line
-            dst_rect = sdl2.SDL_Rect(x, y + i * (self.font_size * self.scale_factor - 1), w, h)
+            dst_rect = sdl2.SDL_Rect(x, y + i * (self.font_size * self.font_scale - 1), w, h)
 
             # Render texture to the renderer
             sdl2.SDL_RenderCopy(renderer.sdlrenderer, texture, None, dst_rect)
@@ -184,7 +194,7 @@ class NESWindow():
                 self.add_ram_watch(key, ram_dict[key])
         
         self.running = True
-        self.nes = NES(self.rom_path) if self.headless else WindowedNES(self.rom_path, scaling_factor=2)
+        self.nes = NES(self.rom_path) if self.headless else WindowedNES(self.rom_path)
 
         if self.show_debug: sdl2.SDL_RaiseWindow(self.window.window)
 
@@ -251,3 +261,4 @@ class NESWindow():
         else:
             self.perform_inputs()
             self.frame = self.nes.step(frames=1)
+            

@@ -22,6 +22,7 @@ class PunchOutModel(SDPModel):
         decision_names = ["RIGHT", "LEFT", "DOWN", "UP", "START", "SELECT", "B", "A"]
 
         self.game = NESWindow(rom_path="punch.nes", headless=headless, show_debug=show_debug)
+
         self.game.setup()
 
         self.fight_start = None

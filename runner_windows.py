@@ -15,10 +15,12 @@ from numpy.typing import NDArray
 import numpy as np
 from typing import Optional
 
-class NESWindow():
+class NESWindowWindows():
     def __init__(self, rom_path, headless=False, show_debug=True):
         self.rom_path = rom_path
         self.font_path = "droid_mono.ttf"
+        self.font_size = 8
+        self.scale_factor = 3
         self.headless = headless
         self.show_debug = show_debug
         
@@ -51,7 +53,6 @@ class NESWindow():
 
     def format_text(self):
         self.debug_text = f"fps = {self.frame_rate:.0f}\n\n"
-        print("Debug text:", self.debug_text)
 
         self.debug_text += f"INPUT\n====="
         self.debug_text += str(self.inputs)
@@ -79,7 +80,9 @@ class NESWindow():
             self.debug_live_text = self.debug_live_text[self.debug_live_text.find("\n", 1):]
         self.debug_live_text += "\n" + text
     
-    def create_debug_window(self, title="Debug Window", width=450, height=800):
+    def create_debug_window(self, title="Debug Window", width=350, height=650):
+        sdl2.SDL_SetHint(sdl2.SDL_HINT_WINDOWS_DPI_SCALING, b"1")
+
         sdl2.ext.init()
         sdlttf.TTF_Init()
         if sdl2.ext.init() is not None:
@@ -88,22 +91,22 @@ class NESWindow():
             raise GenericError(f"SDL2_ttf initialization error: {sdl2.SDL_GetError().decode("utf-8")}")
         
         # Load a font for rendering text
-        font = sdlttf.TTF_OpenFont(self.font_path.encode('utf-8'), 20)
+        font = sdlttf.TTF_OpenFont(self.font_path.encode('utf-8'), self.font_size * self.scale_factor)
 
         if font is None:
             raise GenericError(f"Failed to load font. SDL2 error: {sdl2.SDL_GetError().decode("utf-8")}")
         
         # Create a window for debugging information
-        window = sdl2.ext.Window(title, size=(width, height), position=(50, 50), flags=sdl2.SDL_WINDOW_ALLOW_HIGHDPI)
+        window = sdl2.ext.Window(title, size=(width, height), position=(50, 50))
         window.show()
 
         # Create a renderer
         renderer = sdl2.ext.Renderer(window)
-        renderer.logical_size = (width*2, height*2)
+        renderer.logical_size = (width * self.scale_factor, height* self.scale_factor)
         
         return window, renderer, font
 
-    def render_text(self, renderer, font, text, x, y, line_height=20, max_length=75):
+    def render_text(self, renderer, font, text, x, y, max_length=75):
         def wrap_text(text, max_chars=39):
             """
             Wrap the text so that no line exceeds max_chars characters,
@@ -132,7 +135,6 @@ class NESWindow():
                     wrapped_lines.append(' '.join(current_line))
 
             return wrapped_lines
-        
         if text == "": return
                 
         # Wrap the text to ensure each line fits within max_chars
@@ -162,7 +164,7 @@ class NESWindow():
             w, h = surface.contents.w, surface.contents.h
 
             # Create a destination rect for rendering, adjusting y position for each line
-            dst_rect = sdl2.SDL_Rect(x, y + i * line_height, w, h)
+            dst_rect = sdl2.SDL_Rect(x, y + i * (self.font_size * self.scale_factor - 1), w, h)
 
             # Render texture to the renderer
             sdl2.SDL_RenderCopy(renderer.sdlrenderer, texture, None, dst_rect)
@@ -182,11 +184,11 @@ class NESWindow():
                 self.add_ram_watch(key, ram_dict[key])
         
         self.running = True
-        self.nes = NES(self.rom_path) if self.headless else WindowedNES(self.rom_path)
+        self.nes = NES(self.rom_path) if self.headless else WindowedNES(self.rom_path, scaling_factor=2)
 
         if self.show_debug: sdl2.SDL_RaiseWindow(self.window.window)
 
-    def clean_up(self):
+    def clean_up(self, signum=None, frame=None):
         print("Cleaning up SDL resources...")
         if self.debug_font:
             sdlttf.TTF_CloseFont(self.debug_font)
@@ -226,8 +228,8 @@ class NESWindow():
                     return
                 
             current_time = time.perf_counter()
-            if current_time - self.last_debug_update >= 0.05:
 
+            if abs(current_time - self.last_debug_update) >= 0.05:
                 # Clear the renderer with a black background
                 self.sdl_renderer.clear(sdl2.ext.Color(0, 0, 0))
 
