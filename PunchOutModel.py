@@ -91,17 +91,17 @@ class PunchOutModel(SDPModel):
         # if input_count <= 2:
         #     value += 0.05
 
-        value += 800 * float(exog_info["Opponent_ID"] > self.get_state_val("Opponent_ID"))
+        value += 500 * float(exog_info["Opponent_ID"] > self.get_state_val("Opponent_ID"))
         if exog_info["Clock_Seconds"] > self.get_state_val("Clock_Seconds"):
             value -= 0.1
         if exog_info["Tens_Digit_of_Score"] != self.get_state_val("Tens_Digit_of_Score"):
-            value += 3
+            value += 5
         if exog_info["Hundreds_Digit_of_Score"] > self.get_state_val("Hundreds_Digit_of_Score"):
             value += 20
         if exog_info["Thousands_Digit_of_Score"] > self.get_state_val("Thousands_Digit_of_Score"):
             value += 100
         if exog_info["Hearts_1s_place"] != self.get_state_val("Hearts_1s_place"):
-            value -= 1
+            value -= 0.5
         if exog_info["Hearts_10s_place"] > self.get_state_val("Hearts_10s_place"):
             value += 5
         if exog_info["Mac_Knocked_Down_Count"] > self.get_state_val("Mac_Knocked_Down_Count"):
@@ -111,13 +111,14 @@ class PunchOutModel(SDPModel):
         if health_change < 0:
             value += float(1.5 * health_change)
 
-        value = value / 50
+        scaled_reward = max(min(value / 500, 1.0), -1.0)
+        # value = value / 800
 
-        self.total_reward += value
+        self.total_reward += scaled_reward
 
-        self.game.reward_view_string = f"\nReward = {round(value, 10)}, Total reward = {round(self.total_reward, 3)}"
+        self.game.reward_view_string = f"\nReward = {round(scaled_reward, 10)}, Total reward = {round(self.total_reward, 3)}"
 
-        return value
+        return scaled_reward
     
     def reset(self, reset_prng: bool = False):
         """

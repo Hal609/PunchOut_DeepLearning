@@ -88,29 +88,29 @@ class DQNAgent(SDPPolicy):
         self.actions = compute_actions(max_simultaneous_buttons=2)
         self.index_to_action_map = {i: int(action, 2) for i, action in enumerate(self.actions)}  # Map each action to an index
         self.action_to_index_map = {int(action, 2): i for i, action in enumerate(self.actions)}
-        print(self.index_to_action_map)
+
         # Get the number of state observations
         n_observations = len(model.state_names)
         # n_actions = 2**len(model.decision_names) # 2 to the power of num buttons to capture all combos of buttons
         n_actions = len(self.actions)
-
+        # After loss.backward() and before optimizer.step()
         self.policy_net = DQN(n_observations, n_actions).to(self.device)
         self.target_net = DQN(n_observations, n_actions).to(self.device)  # Target network for stable training
         self.target_net.load_state_dict(self.policy_net.state_dict())
-        self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=0.0001, amsgrad=True)
+        self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=0.01, amsgrad=True)
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=1000, gamma=0.1)
         if self.device == "cuda":
             self.max_memory_size = 30000
         else:
-            self.max_memory_size = 1000
+            self.max_memory_size = 8000
         self.memory = [None] * self.max_memory_size
         self.memory_index = 0
         self.memory_full = False
         self.gamma = 0.99995  # Discount factor
         self.epsilon = 1.0 # Exploration rate
-        self.epsilon_decay = 0.999
+        self.epsilon_decay = 0.995
         self.epsilon_min = 0.05
-        self.batch_size = 128
+        self.batch_size = 4096
         self.update_target_every = 1000
         self.steps_done = 0
 
@@ -187,6 +187,9 @@ class DQNAgent(SDPPolicy):
         # Compute Q-values for current states
         q_values = self.policy_net(states)  # Shape: [batch_size, n_actions]
 
+        # Gather the Q-values corresponding to the actions taken
+        q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)  # Shape: [batch_size]
+
         # Compute target Q-values for next states
         with torch.no_grad():
             next_q_values = self.target_net(next_states)  # Shape: [batch_size, n_actions]
@@ -195,18 +198,21 @@ class DQNAgent(SDPPolicy):
         # Compute target Q-values
         target_q_values = rewards + (self.gamma * max_next_q_values) * (1 - dones)  # Shape: [batch_size]
 
-        # Gather the Q-values corresponding to the actions taken
-        q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)  # Shape: [batch_size]
+        if torch.isnan(q_values).any() or torch.isinf(q_values).any():
+            print("Warning: Found NaN or Inf in Q-values")
 
-        # Compute loss
+        # Compute Huber loss
         criterion = nn.SmoothL1Loss()
         loss = criterion(q_value, target_q_values)
         # loss = nn.MSELoss(q_value, target_q_values)
-        self.model.game.debug_print(f"Loss: {float(loss)}")
+        # self.model.game.debug_print(f"Loss: {round(float(loss) * 10000, 2)}")
+        print(f"Loss: {round(float(loss) * 100000, 2)}")
 
         # Optimize the model
         self.optimizer.zero_grad()
         loss.backward()
+        # In place gradient clipping
+        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
         self.optimizer.step()
         self.scheduler.step()
            
@@ -238,11 +244,12 @@ class DQNAgent(SDPPolicy):
                 self.model.state = next_state
                 total_reward += reward
 
-                if self.device == "cuda" or frame_num % 6 == 0:
+                if self.device == "cuda" or frame_num % 60 == 0:
                     self.replay()
 
                 if frame_num % self.update_target_every == 0:
                     self.update_target_network()
+                    # self.model.game.debug_print("Target updated")
                     print("Target updated")
 
                 if frame_num % 1200 == 0:
