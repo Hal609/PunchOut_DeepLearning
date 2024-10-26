@@ -2,6 +2,7 @@ import csv
 import numpy as np
 import cv2
 import torch
+from itertools import combinations
 
 class GenericError(BaseException):pass
 
@@ -56,6 +57,19 @@ def process_frame_buffer(frame):
 
     return normalized_image
 
+def compute_actions(max_simultaneous_buttons=2):
+    num_bits = 8
+
+    # Single 1 options
+    single_ones = [f"{1 << i:08b}" for i in range(num_bits)]
+
+    # Two 1s combinations
+    two_ones =  [f"{(1 << i) | (1 << j):08b}" for i, j in combinations(range(num_bits), max_simultaneous_buttons)]
+
+    # Combine both lists
+    return single_ones + two_ones
+
+    
 global_device = torch.device(
             "cuda" if torch.cuda.is_available() else
             "mps" if torch.backends.mps.is_available() else

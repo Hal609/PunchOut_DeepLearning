@@ -63,6 +63,8 @@ import torch.optim as optim
 import numpy as np
 from collections import deque
 
+from itertools import combinations
+
 # Define the Q-Network
 class DQN(nn.Module):
     def __init__(self, n_observations, n_actions):
@@ -83,29 +85,37 @@ class DQNAgent(SDPPolicy):
 
         self.device = global_device
 
+        self.actions = compute_actions(max_simultaneous_buttons=2)
+        self.index_to_action_map = {i: int(action, 2) for i, action in enumerate(self.actions)}  # Map each action to an index
+        self.action_to_index_map = {int(action, 2): i for i, action in enumerate(self.actions)}
+        print(self.index_to_action_map)
         # Get the number of state observations
         n_observations = len(model.state_names)
-        n_actions = 2**len(model.decision_names) # 2 to the power of num buttons to capture all combos of buttons
+        # n_actions = 2**len(model.decision_names) # 2 to the power of num buttons to capture all combos of buttons
+        n_actions = len(self.actions)
 
         self.policy_net = DQN(n_observations, n_actions).to(self.device)
         self.target_net = DQN(n_observations, n_actions).to(self.device)  # Target network for stable training
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=0.0001, amsgrad=True)
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=1000, gamma=0.1)
-        self.max_memory_size = 30000
+        if self.device == "cuda":
+            self.max_memory_size = 30000
+        else:
+            self.max_memory_size = 1000
         self.memory = [None] * self.max_memory_size
         self.memory_index = 0
         self.memory_full = False
         self.gamma = 0.99995  # Discount factor
         self.epsilon = 1.0 # Exploration rate
         self.epsilon_decay = 0.999
-        self.epsilon_min = 0.1
-        self.batch_size = 64
-        self.update_target_every = 10000
+        self.epsilon_min = 0.05
+        self.batch_size = 128
+        self.update_target_every = 1000
         self.steps_done = 0
 
     def remember(self, state, action, reward, next_state, done):       
-        self.memory[self.memory_index] = (state, action, reward, next_state, done)
+        self.memory[self.memory_index] = (state, self.action_to_index_map[action], reward, next_state, done)
         self.memory_index = (self.memory_index + 1) % self.max_memory_size
         if self.memory_index == 0:
             self.memory_full = True
@@ -128,13 +138,14 @@ class DQNAgent(SDPPolicy):
         '''
         Returns an integer representing multiple simultaneous inputs based on Q-values.
         '''
-        if np.random.rand() < self.epsilon:  # Exploration: return a random integer between 0 and 255
-            return random.randint(0, 255)
+        if np.random.rand() < self.epsilon:
+            return int(random.choice(self.actions), base=2)
 
         # Exploitation: Use Q-values to make decisions
         with torch.no_grad():
             q_values = self.policy_net(state) # Get q values for each action based on current state
-            return torch.argmax(q_values).item()  # Choose action with highest Q-value (exploit)
+            best_action_index = torch.argmax(q_values).item()  # Choose action with highest Q-value (exploit)
+            return self.index_to_action_map[best_action_index]
 
     def action_dict_to_num(self, action_dict):
         # Encoding the action dictionary into a single integer
@@ -150,6 +161,8 @@ class DQNAgent(SDPPolicy):
     # Decoding the integer back into a dictionary format
     def action_num_to_dict(self, action_num):
         action_list = [(action_num >> i) & 1 for i in range(8)]
+        if action_list.count(1) > 2:
+            print("Too many actions !!!!")
         action_dict = {
             "RIGHT": action_list[0], "LEFT": action_list[1], "DOWN": action_list[2], "UP": action_list[3],
             "START": action_list[4], "SELECT": action_list[5], "B": action_list[6], "A": action_list[7]
@@ -225,9 +238,8 @@ class DQNAgent(SDPPolicy):
                 self.model.state = next_state
                 total_reward += reward
 
-                # if frame_num % 1 == 0:
-                # for i in range(5):
-                self.replay()
+                if self.device == "cuda" or frame_num % 6 == 0:
+                    self.replay()
 
                 if frame_num % self.update_target_every == 0:
                     self.update_target_network()

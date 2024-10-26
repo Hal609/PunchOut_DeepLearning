@@ -2,7 +2,7 @@ import sys
 
 sys.path.append("../")
 from BaseClasses.SDPModel import SDPModel
-from runner import NESWindow
+from runner_mac import NESWindow
 from utils import *
 
 class PunchOutModel(SDPModel):
