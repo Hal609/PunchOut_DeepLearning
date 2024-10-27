@@ -98,7 +98,7 @@ class DQNAgent(SDPPolicy):
         self.target_net = DQN(n_observations, n_actions).to(self.device)  # Target network for stable training
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=0.01, amsgrad=True)
-        self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=1000, gamma=0.1)
+        self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=10000, gamma=0.01)
         if self.device == "cuda":
             self.max_memory_size = 30000
         else:

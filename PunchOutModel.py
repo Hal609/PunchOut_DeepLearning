@@ -95,7 +95,7 @@ class PunchOutModel(SDPModel):
         if exog_info["Clock_Seconds"] > self.get_state_val("Clock_Seconds"):
             value -= 0.1
         if exog_info["Tens_Digit_of_Score"] != self.get_state_val("Tens_Digit_of_Score"):
-            value += 5
+            value += 10
         if exog_info["Hundreds_Digit_of_Score"] > self.get_state_val("Hundreds_Digit_of_Score"):
             value += 20
         if exog_info["Thousands_Digit_of_Score"] > self.get_state_val("Thousands_Digit_of_Score"):
