@@ -8,7 +8,7 @@ random_policy = pop.RandomPatient(model=model)
 uppercut_policy = pop.SpamUppercut(model=model)
 deepq_policy = pop.DQNAgent(model=model)
 
-deepq_policy.train_agent(n_episodes=75)
+deepq_policy.train_agent(n_episodes=500)
 
 # print(f"Random policy: {random_policy.run_policy(5)}")
 # print(f"Uppercut policy: {uppercut_policy.run_policy(5)}")
