@@ -68,6 +68,8 @@ import signal
 import json
 import os
 
+from visualise_run import visualise_latest
+
 import platform
 
 # Define the Q-Network
@@ -113,26 +115,32 @@ class DQNAgent(SDPPolicy):
         self.memory = [None] * self.max_memory_size
         self.memory_index = 0
         self.memory_full = False
-        self.gamma = 0.99995  # Discount factor
+        self.gamma = 0.9  # Discount factor
         self.epsilon = 1.0 # Exploration rate
         self.epsilon_decay = 0.91
         self.epsilon_min = 0.05
-        self.batch_size =  64
-        self.update_target_every = 200
+        self.batch_size =  256
+        self.update_target_every = 5000
         self.steps_done = 0
 
         self.memory_bar = Bar('Processing', max=1000)
 
-        self.data_file = None
+        self.frame_data_file = None
+        self.episode_data_file = None
+        self.folder_name = None
 
         # Register cleanup function for common exit signals
-        signal.signal(signal.SIGINT, self.clean_up)
-        signal.signal(signal.SIGTERM, self.clean_up)
+        signal.signal(signal.SIGINT, self.exit)
+        signal.signal(signal.SIGTERM, self.exit)
 
-    def clean_up(self, signum=None, frame=None):
+    def exit(self, signum=None, frame=None):
         self.model.game.clean_up(signum, frame)
-        if self.data_file is not None:
-            self.data_file.close()
+        self.episode_data_file.close()
+        self.frame_data_file.close()
+
+        print("Show latest")
+        visualise_latest(folder_name=self.folder_name)
+        print("Shown")
 
     def display_memory_progress(self):
         import subprocess
@@ -170,14 +178,12 @@ class DQNAgent(SDPPolicy):
         '''
         if np.random.rand() < self.epsilon:
             return random.randint(0, len(self.actions) - 1)
-            return int(random.choice(self.actions), base=2)
 
         # Exploitation: Use Q-values to make decisions
         with torch.no_grad():
             q_values = self.policy_net(state) # Get q values for each action based on current state
             best_action_index = torch.argmax(q_values).item()  # Choose action with highest Q-value (exploit)
             return best_action_index
-            return self.index_to_action_map[best_action_index]
 
     def action_dict_to_num(self, action_dict):
         # Encoding the action dictionary into a single integer
@@ -202,7 +208,7 @@ class DQNAgent(SDPPolicy):
     def replay(self):
         memory_size = self.max_memory_size if self.memory_full else self.memory_index
         if memory_size < self.batch_size:
-            return 0.0
+            return 0.0, None
 
         batch = random.sample(self.memory[:memory_size], self.batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
@@ -246,7 +252,7 @@ class DQNAgent(SDPPolicy):
         self.optimizer.step()
         # self.scheduler.step()
 
-        return loss
+        return loss, q_value
            
     def update_target_network(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -255,11 +261,15 @@ class DQNAgent(SDPPolicy):
         '''
         Main training function for model
         '''
-        output_folder = f'Outputs/{datetime.datetime.now().strftime("%H%M%S_%m%d%Y")}'
-        os.makedirs(output_folder)
-        self.data_file = open(output_folder + "/data.csv", "a")
-        self.data_file.writelines("loss,reward,episode,frame_number")
-        with open(output_folder + "/paramters.json", "w") as parameters_file:
+        self.folder_name = f'Outputs/{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}'
+        os.makedirs(self.folder_name)
+        self.frame_data_file = open(self.folder_name + "/frame_data.csv", "a")
+        self.frame_data_file.write("loss,reward,episode,frame_number,epsilon,q_vals\n")
+        self.episode_data_file = open(self.folder_name + "/episode_data.csv", "a")
+        self.episode_data_file.write("total_reward,episode_length,q_vals\n")
+        self.episode_data_file.close()
+
+        with open(self.folder_name + "/paramters.json", "w") as parameters_file:
             json.dump({
                 "Network_Structure": self.network_structure,
                 "Learning Rate": self.learning_rate,
@@ -281,8 +291,11 @@ class DQNAgent(SDPPolicy):
             done = False
             total_reward = 0
             frame_num = frame_num % self.update_target_every
+            episode_duration = 0
+
             while not done:
                 frame_num += 1
+                episode_duration += 1
 
                 action_index = self.act(self.model.state)
                 self.model.step_emu(self.index_to_action_map[action_index])
@@ -295,14 +308,14 @@ class DQNAgent(SDPPolicy):
                 self.model.state = next_state
                 total_reward += reward
 
-                if platform.system() == "Windows" or frame_num % 60 == 0:
-                    loss = self.replay()
-                    self.data_file.writelines(f"{round(float(loss) * 10000, 5)},{reward},{episode},{frame_num}")
+                if platform.system() == "Windows" and frame_num % 4 == 0:
+                    loss, q_vals = self.replay()
+                    self.frame_data_file.write(f"{round(float(loss) * 10000, 5)},{reward},{episode},{frame_num},{self.epsilon},{0}\n")
                     self.model.game.debug_print(f"Loss: {round(float(loss) * 10000, 5)}", clear_type="self", prepend=True)
 
                 if frame_num % self.update_target_every == 0:
                     self.update_target_network()
-                    self.model.game.debug_print(f"Target updated {frame_num}")
+                    self.model.game.debug_print(f"Target updated {frame_num//200}", clear_type="self", prepend=True)
 
                 if frame_num % 1200 == 0:
                     # Update epsilon
@@ -312,6 +325,8 @@ class DQNAgent(SDPPolicy):
                 if done: 
                     tot = float(total_reward)
                     total_rewards.append(tot)
+                    with open(self.folder_name + "/episode_data.csv", "a") as self.episode_data_file:
+                        self.episode_data_file.write(f"{total_reward},{frame_num},{0}\n")
                     self.model.game.debug_print(f"{episode}: Total reward = {round(tot, 3)} Ave of last 10: {round(sum(total_rewards[-10:])/10, 2)}, Ave first 10: {round(sum(total_rewards[:10])/10, 2)}")
                     print(f"{episode}: Total reward = {round(tot, 3)} Ave of last 10: {round(sum(total_rewards[-10:])/10, 2)}, Ave first 10: {round(sum(total_rewards[:10])/10, 2)}")
                     break

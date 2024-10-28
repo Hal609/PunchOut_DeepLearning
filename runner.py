@@ -34,9 +34,9 @@ class NESWindow():
             self.window_size = (450, 800)
         else:
             self.font_size = 8
-            self.scale_factor = 3
+            self.scale_factor = 2.5
             self.font_scale = 3
-            self.window_size = (350, 650)
+            self.window_size = (350, 750)
         
         self.nes = None
         self.frame:Optional[NDArray[np.uint8]]
@@ -119,7 +119,7 @@ class NESWindow():
             raise GenericError(f"SDL2_ttf initialization error: {sdl2.SDL_GetError().decode("utf-8")}")
         
         # Load a font for rendering text
-        font = sdlttf.TTF_OpenFont(self.font_path.encode('utf-8'), self.font_size * self.font_scale)
+        font = sdlttf.TTF_OpenFont(self.font_path.encode('utf-8'), round(self.font_size * self.font_scale))
 
         if font is None:
             raise GenericError(f"Failed to load font. SDL2 error: {sdl2.SDL_GetError().decode("utf-8")}")
@@ -130,7 +130,7 @@ class NESWindow():
 
         # Create a renderer
         renderer = sdl2.ext.Renderer(window)
-        renderer.logical_size = tuple(i * self.scale_factor for i in self.window_size)
+        renderer.logical_size = tuple(round(i * self.scale_factor) for i in self.window_size)
         
         return window, renderer, font
 
@@ -192,7 +192,7 @@ class NESWindow():
             w, h = surface.contents.w, surface.contents.h
 
             # Create a destination rect for rendering, adjusting y position for each line
-            dst_rect = sdl2.SDL_Rect(x, y + i * (self.font_size * self.font_scale - 1), w, h)
+            dst_rect = sdl2.SDL_Rect(x, round(y + i * (self.font_size * self.font_scale - 1)), w, h)
 
             # Render texture to the renderer
             sdl2.SDL_RenderCopy(renderer.sdlrenderer, texture, None, dst_rect)
