@@ -16,10 +16,14 @@ import numpy as np
 from typing import Optional
 import platform
 
+from typing import Literal
+_CLEARTYPES = Literal["none", "all", "line", "self"]
+
 class NESWindow():
     def __init__(self, rom_path, headless=False, show_debug=True):
         self.rom_path = rom_path
         self.font_path = "droid_mono.ttf"
+        self.line_limit = 25
         self.headless = headless
         self.show_debug = show_debug
 
@@ -45,8 +49,8 @@ class NESWindow():
         self.debug_font = None
 
         # Register cleanup function for common exit signals
-        signal.signal(signal.SIGINT, self.clean_up)
-        signal.signal(signal.SIGTERM, self.clean_up)
+        # signal.signal(signal.SIGINT, self.clean_up)
+        # signal.signal(signal.SIGTERM, self.clean_up)
 
         self.reward_view_string = ""
         self.training_epsilon = 1.0
@@ -80,15 +84,29 @@ class NESWindow():
         self.debug_text += "\n\nMESSAGES\n========"
         self.debug_text += self.debug_live_text
 
-    def debug_print(self, text: str, clear=False):
-        if clear:
-            self.debug_live_text = "\n" + text
-            return
-        
-        line_limit = 25
-        if self.debug_live_text.count("\n") > line_limit:
-            self.debug_live_text = self.debug_live_text[self.debug_live_text.find("\n", 1):]
-        self.debug_live_text += "\n" + text
+    def debug_print(self, text: str, clear_type: _CLEARTYPES = "none", prepend=False):
+        match clear_type:
+            case "line":
+                last_new_line = self.debug_live_text.rfind("\n")
+                if last_new_line == -1: last_new_line = len(self.debug_live_text) - self.line_limit
+                self.debug_live_text = self.debug_live_text[:last_new_line]
+            case "all":
+                self.debug_live_text = ""
+            case "self":
+                last_occurance = self.debug_live_text.find(text[:5])
+                occurance_line_end = self.debug_live_text.find("\n", last_occurance)
+                if occurance_line_end == -1:
+                    self.debug_live_text = self.debug_live_text[:last_occurance-1]
+                else:
+                    self.debug_live_text = self.debug_live_text[:last_occurance-1] + self.debug_live_text[occurance_line_end:]
+            case "none":
+                if self.debug_live_text.count("\n") > self.line_limit:
+                    self.debug_live_text = self.debug_live_text[self.debug_live_text.find("\n", 1):]
+            
+        if prepend:
+            self.debug_live_text = "\n" + text + self.debug_live_text
+        else:
+           self.debug_live_text +=  "\n" + text
     
     def create_debug_window(self, title="Debug Window"):
         sdl2.SDL_SetHint(sdl2.SDL_HINT_WINDOWS_DPI_SCALING, b"1")
@@ -223,11 +241,12 @@ class NESWindow():
 
         self.clean_up()
 
-    def step(self):
+    def step(self, inputs):
         if self.show_debug: 
             start_time = time.perf_counter()  # Start timing
 
-            self.perform_inputs()
+            # self.perform_inputs()
+            self.nes.controller = inputs
             
             self.frame = self.nes.step(frames=1)
 

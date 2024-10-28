@@ -55,9 +55,10 @@ class PunchOutModel(SDPModel):
             if self.get_state_val("Mac_Losses") > 0: return True
             if self.get_state_val("Mac_Knocked_Down_Count") > 0: return True
             if self.get_state_val("Current_Round") > 1/255: return True
+            if 0 != self.get_state_val("Macs_Health") != 96/255: return True
         return False
             
-    def exog_info_fn(self, decision):
+    def exog_info_fn(self, decision={}):
         # Return new RAM values
         new_values = {}
         n = 0
@@ -70,8 +71,8 @@ class PunchOutModel(SDPModel):
             new_values[key] = self.game.nes[self.ram_dict[key]]/255
         return new_values
     
-    def transition_fn(self, decision):
-        exog_info = self.exog_info_fn(decision)
+    def transition_fn(self, exog_info, decision={}):
+        # exog_info = self.exog_info_fn(decision)
         new_state = self.build_state(exog_info)
 
         self.check_and_save(new_state)
@@ -82,7 +83,7 @@ class PunchOutModel(SDPModel):
         if state[self.state_names.index("Global_Variable_for_Enemy_Actions")] == 115/255 and self.fight_start is None:
             self.fight_start = self.game.nes.save()
 
-    def objective_fn(self, decision, exog_info):
+    def objective_fn(self, exog_info, decision={}):
         value = 0
         if self.fight_start is None or exog_info["Fight_Started_1_fight_started_0_between_rounds"] == 0.0: return value
 
@@ -130,15 +131,14 @@ class PunchOutModel(SDPModel):
         if self.fight_start is not None:
             self.game.nes.load(self.fight_start)
 
-
         self.total_reward = 0
         self.state = self.initial_state
         self.objective = 0.0
         self.t = self.t0
 
     def step_emu(self, decision):
-        self.game.inputs = decision
-        self.game.step()
+        # self.game.inputs = decision
+        self.game.step(decision)
 
     def step(self, decision):
         self.step_emu(decision)

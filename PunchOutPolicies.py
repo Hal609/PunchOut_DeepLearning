@@ -62,16 +62,21 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from collections import deque
+from progress.bar import Bar
+import datetime
+import signal
+import json
+import os
 
-from itertools import combinations
+import platform
 
 # Define the Q-Network
 class DQN(nn.Module):
-    def __init__(self, n_observations, n_actions):
+    def __init__(self, network_structure):
         super(DQN, self).__init__()
-        self.fc1 = nn.Linear(n_observations, 256)  # Input is the set of ram values
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, n_actions)  # Output is the Q-value for each action (RIGHT, LEFT, DOWN, UP, START, SELECT", B, A)
+        self.fc1 = nn.Linear(network_structure[0], network_structure[1])  # Input is the set of ram values
+        self.fc2 = nn.Linear(network_structure[1], network_structure[1])
+        self.fc3 = nn.Linear(network_structure[1], network_structure[2])  # Output is the Q-value for each action (RIGHT, LEFT, DOWN, UP, START, SELECT", B, A)
 
     def forward(self, x):
         x = torch.relu(self.fc1(x))
@@ -84,6 +89,7 @@ class DQNAgent(SDPPolicy):
         super().__init__(model, policy_name)
 
         self.device = global_device
+        print(self.device)
 
         self.actions = compute_actions(max_simultaneous_buttons=2)
         self.index_to_action_map = {i: int(action, 2) for i, action in enumerate(self.actions)}  # Map each action to an index
@@ -93,30 +99,54 @@ class DQNAgent(SDPPolicy):
         n_observations = len(model.state_names)
         # n_actions = 2**len(model.decision_names) # 2 to the power of num buttons to capture all combos of buttons
         n_actions = len(self.actions)
-        # After loss.backward() and before optimizer.step()
-        self.policy_net = DQN(n_observations, n_actions).to(self.device)
-        self.target_net = DQN(n_observations, n_actions).to(self.device)  # Target network for stable training
+        self.network_structure = [n_observations, 256, n_actions]
+        self.policy_net = DQN(self.network_structure).to(self.device)
+        self.target_net = DQN(self.network_structure).to(self.device)  # Target network for stable training
         self.target_net.load_state_dict(self.policy_net.state_dict())
-        self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=0.01, amsgrad=True)
-        self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=10000, gamma=0.01)
-        if self.device == "cuda":
-            self.max_memory_size = 30000
-        else:
+        self.learning_rate = 0.02
+        self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=self.learning_rate, amsgrad=True)
+        # self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=10000, gamma=0.01)
+        if platform.system() == "Darwin":
             self.max_memory_size = 8000
+        else:
+            self.max_memory_size = 100000
         self.memory = [None] * self.max_memory_size
         self.memory_index = 0
         self.memory_full = False
         self.gamma = 0.99995  # Discount factor
         self.epsilon = 1.0 # Exploration rate
-        self.epsilon_decay = 0.995
+        self.epsilon_decay = 0.91
         self.epsilon_min = 0.05
-        self.batch_size = 4096
-        self.update_target_every = 1000
+        self.batch_size =  64
+        self.update_target_every = 200
         self.steps_done = 0
 
-    def remember(self, state, action, reward, next_state, done):       
-        self.memory[self.memory_index] = (state, self.action_to_index_map[action], reward, next_state, done)
+        self.memory_bar = Bar('Processing', max=1000)
+
+        self.data_file = None
+
+        # Register cleanup function for common exit signals
+        signal.signal(signal.SIGINT, self.clean_up)
+        signal.signal(signal.SIGTERM, self.clean_up)
+
+    def clean_up(self, signum=None, frame=None):
+        self.model.game.clean_up(signum, frame)
+        if self.data_file is not None:
+            self.data_file.close()
+
+    def display_memory_progress(self):
+        import subprocess
+        print(subprocess.run(['ls', '-l'], stdout=subprocess.PIPE).stdout.decode('utf-8'))
+
+        memory_percent = self.memory_index/self.max_memory_size * 100
+        if memory_percent % 0.1 < 0.001:
+            print(f"Memory, {round(self.memory_index/self.max_memory_size * 100, 1)}% full")
+
+    def remember(self, state, action_index, reward, next_state, done):
+        self.memory[self.memory_index] = (state, action_index, reward, next_state, done)
+
         self.memory_index = (self.memory_index + 1) % self.max_memory_size
+        # self.display_memory_progress()
         if self.memory_index == 0:
             self.memory_full = True
 
@@ -139,12 +169,14 @@ class DQNAgent(SDPPolicy):
         Returns an integer representing multiple simultaneous inputs based on Q-values.
         '''
         if np.random.rand() < self.epsilon:
+            return random.randint(0, len(self.actions) - 1)
             return int(random.choice(self.actions), base=2)
 
         # Exploitation: Use Q-values to make decisions
         with torch.no_grad():
             q_values = self.policy_net(state) # Get q values for each action based on current state
             best_action_index = torch.argmax(q_values).item()  # Choose action with highest Q-value (exploit)
+            return best_action_index
             return self.index_to_action_map[best_action_index]
 
     def action_dict_to_num(self, action_dict):
@@ -161,8 +193,6 @@ class DQNAgent(SDPPolicy):
     # Decoding the integer back into a dictionary format
     def action_num_to_dict(self, action_num):
         action_list = [(action_num >> i) & 1 for i in range(8)]
-        if action_list.count(1) > 2:
-            print("Too many actions !!!!")
         action_dict = {
             "RIGHT": action_list[0], "LEFT": action_list[1], "DOWN": action_list[2], "UP": action_list[3],
             "START": action_list[4], "SELECT": action_list[5], "B": action_list[6], "A": action_list[7]
@@ -172,7 +202,7 @@ class DQNAgent(SDPPolicy):
     def replay(self):
         memory_size = self.max_memory_size if self.memory_full else self.memory_index
         if memory_size < self.batch_size:
-            return
+            return 0.0
 
         batch = random.sample(self.memory[:memory_size], self.batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
@@ -205,8 +235,8 @@ class DQNAgent(SDPPolicy):
         criterion = nn.SmoothL1Loss()
         loss = criterion(q_value, target_q_values)
         # loss = nn.MSELoss(q_value, target_q_values)
-        # self.model.game.debug_print(f"Loss: {round(float(loss) * 10000, 2)}")
-        print(f"Loss: {round(float(loss) * 100000, 2)}")
+        
+        # print(f"Loss: {round(float(loss) * 100000, 2)}")
 
         # Optimize the model
         self.optimizer.zero_grad()
@@ -214,7 +244,9 @@ class DQNAgent(SDPPolicy):
         # In place gradient clipping
         torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
         self.optimizer.step()
-        self.scheduler.step()
+        # self.scheduler.step()
+
+        return loss
            
     def update_target_network(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -223,34 +255,54 @@ class DQNAgent(SDPPolicy):
         '''
         Main training function for model
         '''
+        output_folder = f'Outputs/{datetime.datetime.now().strftime("%H%M%S_%m%d%Y")}'
+        os.makedirs(output_folder)
+        self.data_file = open(output_folder + "/data.csv", "a")
+        self.data_file.writelines("loss,reward,episode,frame_number")
+        with open(output_folder + "/paramters.json", "w") as parameters_file:
+            json.dump({
+                "Network_Structure": self.network_structure,
+                "Learning Rate": self.learning_rate,
+                "Optimiser": str(type(self.optimizer)),
+                "Max Memory Size":self.max_memory_size,
+                "Gamma": self.gamma,
+                "Epsilon0": self.epsilon,
+                "Epsilon Decay Factor": self.epsilon_decay,
+                "Epsilon Min": self.epsilon_min,
+                "Batch Size": self.batch_size,
+                "Update Target Every": self.update_target_every  
+            }, parameters_file, indent=4)
+
         total_rewards = []
+        frame_num = 0
+
         # Training loop
         for episode in range(n_episodes):
             done = False
             total_reward = 0
-            frame_num = 0
+            frame_num = frame_num % self.update_target_every
             while not done:
                 frame_num += 1
 
-                action = self.act(self.model.state)
-                decision_dict = self.action_num_to_dict(action)
-                self.model.step_emu(decision_dict)
-                exog = self.model.exog_info_fn(decision_dict)
-                next_state = self.model.transition_fn(decision_dict)
-                reward = self.model.objective_fn(decision_dict, exog)
+                action_index = self.act(self.model.state)
+                self.model.step_emu(self.index_to_action_map[action_index])
+                exog = self.model.exog_info_fn()
+                next_state = self.model.transition_fn(exog)
+                reward = self.model.objective_fn(exog)
                 done = self.model.is_finished()
                 
-                self.remember(self.model.state, action, reward, next_state, done)
+                self.remember(self.model.state, action_index, reward, next_state, done)
                 self.model.state = next_state
                 total_reward += reward
 
-                if self.device == "cuda" or frame_num % 60 == 0:
-                    self.replay()
+                if platform.system() == "Windows" or frame_num % 60 == 0:
+                    loss = self.replay()
+                    self.data_file.writelines(f"{round(float(loss) * 10000, 5)},{reward},{episode},{frame_num}")
+                    self.model.game.debug_print(f"Loss: {round(float(loss) * 10000, 5)}", clear_type="self", prepend=True)
 
                 if frame_num % self.update_target_every == 0:
                     self.update_target_network()
-                    # self.model.game.debug_print("Target updated")
-                    print("Target updated")
+                    self.model.game.debug_print(f"Target updated {frame_num}")
 
                 if frame_num % 1200 == 0:
                     # Update epsilon
@@ -261,10 +313,11 @@ class DQNAgent(SDPPolicy):
                     tot = float(total_reward)
                     total_rewards.append(tot)
                     self.model.game.debug_print(f"{episode}: Total reward = {round(tot, 3)} Ave of last 10: {round(sum(total_rewards[-10:])/10, 2)}, Ave first 10: {round(sum(total_rewards[:10])/10, 2)}")
+                    print(f"{episode}: Total reward = {round(tot, 3)} Ave of last 10: {round(sum(total_rewards[-10:])/10, 2)}, Ave first 10: {round(sum(total_rewards[:10])/10, 2)}")
                     break
 
             self.model.reset(reset_prng=False)
-                
+                    
         plt.plot(np.arange(0, len(total_rewards)), total_rewards)
         plt.show()
 

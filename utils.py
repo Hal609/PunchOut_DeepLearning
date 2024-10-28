@@ -64,12 +64,16 @@ def compute_actions(max_simultaneous_buttons=2):
     single_ones = [f"{1 << i:08b}" for i in range(num_bits)]
 
     # Two 1s combinations
-    two_ones =  [f"{(1 << i) | (1 << j):08b}" for i, j in combinations(range(num_bits), max_simultaneous_buttons)]
+    # two_ones =  [f"{(1 << i) | (1 << j):08b}" for i, j in combinations(range(num_bits), max_simultaneous_buttons)]
+    return single_ones + ["00010001", "00010010"]
 
-    # Combine both lists
-    return single_ones + two_ones
 
-    
+import sys
+def printc(text):
+    sys.stdout.write('\r' + ' ' * 80 + '\r')  # Clear the line
+    sys.stdout.flush()
+    print(text)
+
 global_device = torch.device(
             "cuda" if torch.cuda.is_available() else
             "mps" if torch.backends.mps.is_available() else
