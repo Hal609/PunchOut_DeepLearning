@@ -36,7 +36,7 @@ def visualise_latest():
 
     # Loss plot
     sns.scatterplot(cropped_frame_data, x="frame_number", y="loss", marker="o", legend=False, alpha=0.3, hue="reward")
-    sns.lineplot(cropped_frame_data, x="frame_number" y="loss_running_ave", alpha=0.7)
+    sns.lineplot(cropped_frame_data, x="frame_number", y="loss_running_ave", alpha=0.7)
     # axes.set_ylim(-1, 13)
     plt.savefig(f"Outputs/{folder_name}/loss_over_time.svg")
     plt.show()

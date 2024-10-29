@@ -152,7 +152,7 @@ class DQNAgent(SDPPolicy):
         self.memory[self.memory_index] = (state, action_index, reward, next_state, done)
 
         self.memory_index = (self.memory_index + 1) % self.max_memory_size
-        # self.display_memory_progress()
+        self.display_memory_progress()
         if self.memory_index == 0:
             self.memory_full = True
 
