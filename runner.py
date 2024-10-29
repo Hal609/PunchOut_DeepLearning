@@ -48,10 +48,6 @@ class NESWindow():
         self.window = None
         self.debug_font = None
 
-        # Register cleanup function for common exit signals
-        # signal.signal(signal.SIGINT, self.clean_up)
-        # signal.signal(signal.SIGTERM, self.clean_up)
-
         self.reward_view_string = ""
         self.training_epsilon = 1.0
 
@@ -60,7 +56,7 @@ class NESWindow():
         self.last_debug_update = 9999
         
         self.ram_watches = []
-        self.inputs = {}
+        self.inputs = 0
 
     def add_ram_watch(self, label: str, address: int):
         self.ram_watches.append((label, address))
@@ -68,8 +64,8 @@ class NESWindow():
     def format_text(self):
         self.debug_text = f"fps = {self.frame_rate:.0f}\n\n"
 
-        self.debug_text += f"INPUT\n====="
-        self.debug_text += str(self.inputs)
+        self.debug_text += f"INPUT\n=====\n"
+        self.debug_text += f"{self.inputs:b}"
 
         self.debug_text += f"\n\nREWARDS\n======="
         self.debug_text += self.reward_view_string
@@ -227,25 +223,21 @@ class NESWindow():
         sdlttf.TTF_Quit()
         sdl2.ext.quit()
         print("Cleanup completed.")
-        sys.exit(0)
 
-    def perform_inputs(self):
-        # Convert the dictionary back into an integer 
-        self.nes.controller = sum(val << i for i, val in enumerate(self.inputs.values()))
+    # def run(self):
+    #     self.setup()
 
-    def run(self):
-        self.setup()
+    #     while self.running and not self.nes.should_close:
+    #         self.step()
 
-        while self.running and not self.nes.should_close:
-            self.step()
-
-        self.clean_up()
+    #     self.clean_up()
 
     def step(self, inputs):
         if self.show_debug: 
             start_time = time.perf_counter()  # Start timing
 
             # self.perform_inputs()
+            self.inputs = inputs
             self.nes.controller = inputs
             
             self.frame = self.nes.step(frames=1)

@@ -65,6 +65,7 @@ from collections import deque
 from progress.bar import Bar
 import datetime
 import signal
+import time
 import json
 import os
 
@@ -91,11 +92,10 @@ class DQNAgent(SDPPolicy):
         super().__init__(model, policy_name)
 
         self.device = global_device
-        print(self.device)
+        print("Using device:", self.device)
 
-        self.actions = compute_actions(max_simultaneous_buttons=2)
-        self.index_to_action_map = {i: int(action, 2) for i, action in enumerate(self.actions)}  # Map each action to an index
-        self.action_to_index_map = {int(action, 2): i for i, action in enumerate(self.actions)}
+        # self.actions = compute_actions(max_simultaneous_buttons=2)
+        self.actions = ["00000000", "10000000", "01000000", "00100000", "00010000", "00001000", "00000010", "00000001", "01001000"]
 
         # Get the number of state observations
         n_observations = len(model.state_names)
@@ -105,7 +105,7 @@ class DQNAgent(SDPPolicy):
         self.policy_net = DQN(self.network_structure).to(self.device)
         self.target_net = DQN(self.network_structure).to(self.device)  # Target network for stable training
         self.target_net.load_state_dict(self.policy_net.state_dict())
-        self.learning_rate = 0.02
+        self.learning_rate = 0.001
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=self.learning_rate, amsgrad=True)
         # self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=10000, gamma=0.01)
         if platform.system() == "Darwin":
@@ -117,10 +117,10 @@ class DQNAgent(SDPPolicy):
         self.memory_full = False
         self.gamma = 0.9  # Discount factor
         self.epsilon = 1.0 # Exploration rate
-        self.epsilon_decay = 0.91
-        self.epsilon_min = 0.05
-        self.batch_size =  256
-        self.update_target_every = 5000
+        self.epsilon_decay = 0.98
+        self.epsilon_min = 0.0
+        self.batch_size =  512
+        self.update_target_every = 3000
         self.steps_done = 0
 
         self.memory_bar = Bar('Processing', max=1000)
@@ -137,14 +137,12 @@ class DQNAgent(SDPPolicy):
         self.model.game.clean_up(signum, frame)
         self.episode_data_file.close()
         self.frame_data_file.close()
-
-        print("Show latest")
-        visualise_latest(folder_name=self.folder_name)
-        print("Shown")
+        time.sleep(10)
+        visualise_latest()
 
     def display_memory_progress(self):
-        import subprocess
-        print(subprocess.run(['ls', '-l'], stdout=subprocess.PIPE).stdout.decode('utf-8'))
+        # import subprocess
+        # print(subprocess.run(['ls', '-l'], stdout=subprocess.PIPE).stdout.decode('utf-8'))
 
         memory_percent = self.memory_index/self.max_memory_size * 100
         if memory_percent % 0.1 < 0.001:
@@ -175,9 +173,11 @@ class DQNAgent(SDPPolicy):
     def act(self, state):
         '''
         Returns an integer representing multiple simultaneous inputs based on Q-values.
+        a b select start up down left right
         '''
         if np.random.rand() < self.epsilon:
-            return random.randint(0, len(self.actions) - 1)
+            choice = random.randint(0, len(self.actions) - 1)
+            return choice
 
         # Exploitation: Use Q-values to make decisions
         with torch.no_grad():
@@ -185,82 +185,47 @@ class DQNAgent(SDPPolicy):
             best_action_index = torch.argmax(q_values).item()  # Choose action with highest Q-value (exploit)
             return best_action_index
 
-    def action_dict_to_num(self, action_dict):
-        # Encoding the action dictionary into a single integer
-        # Create a list of the action values in a specific order
-        action_list = [action_dict["RIGHT"], action_dict["LEFT"], action_dict["DOWN"], 
-                    action_dict["UP"], action_dict["START"], action_dict["SELECT"], 
-                    action_dict["B"], action_dict["A"]]
-        
-        # Convert the list of binary values into an integer
-        action_int = sum([val << i for i, val in enumerate(action_list)])
-        return action_int
-
-    # Decoding the integer back into a dictionary format
-    def action_num_to_dict(self, action_num):
-        action_list = [(action_num >> i) & 1 for i in range(8)]
-        action_dict = {
-            "RIGHT": action_list[0], "LEFT": action_list[1], "DOWN": action_list[2], "UP": action_list[3],
-            "START": action_list[4], "SELECT": action_list[5], "B": action_list[6], "A": action_list[7]
-        }
-        return action_dict
-
     def replay(self):
         memory_size = self.max_memory_size if self.memory_full else self.memory_index
+
         if memory_size < self.batch_size:
             return 0.0, None
 
         batch = random.sample(self.memory[:memory_size], self.batch_size)
+
         states, actions, rewards, next_states, dones = zip(*batch)
 
         # Convert to tensors and move to device
-        states = torch.stack(states).to(self.device)
-        next_states = torch.stack(next_states).to(self.device)
-        actions = torch.tensor(actions, dtype=torch.long, device=self.device)
+        states = torch.stack(states)
+        next_states = torch.stack(next_states)
+        actions = torch.tensor(actions, dtype=torch.long, device=self.device).unsqueeze(1)
         rewards = torch.tensor(rewards, dtype=torch.float32, device=self.device)
-        dones = torch.tensor(dones, dtype=torch.float32, device=self.device)
+        dones = torch.tensor(dones, dtype=torch.bool, device=self.device)
 
         # Compute Q-values for current states
-        q_values = self.policy_net(states)  # Shape: [batch_size, n_actions]
+        q_value = self.policy_net(states).gather(1, actions)
 
-        # Gather the Q-values corresponding to the actions taken
-        q_value = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)  # Shape: [batch_size]
-
-        # Compute target Q-values for next states
+        # Compute the target Q-values for the next states using target_net
         with torch.no_grad():
-            next_q_values = self.target_net(next_states)  # Shape: [batch_size, n_actions]
-            max_next_q_values, _ = torch.max(next_q_values, dim=1)  # Shape: [batch_size]
+            next_q_values = self.target_net(next_states).max(1)[0]
+            target_q_values = rewards + (self.gamma * next_q_values * ~dones)
 
-        # Compute target Q-values
-        target_q_values = rewards + (self.gamma * max_next_q_values) * (1 - dones)  # Shape: [batch_size]
-
-        if torch.isnan(q_values).any() or torch.isinf(q_values).any():
-            print("Warning: Found NaN or Inf in Q-values")
-
-        # Compute Huber loss
-        criterion = nn.SmoothL1Loss()
-        loss = criterion(q_value, target_q_values)
-        # loss = nn.MSELoss(q_value, target_q_values)
-        
-        # print(f"Loss: {round(float(loss) * 100000, 2)}")
+        # Compute loss
+        loss_func = nn.MSELoss()
+        loss = loss_func(q_value.squeeze(1), target_q_values)
+        # loss = nn.SmoothL1Loss(q_value, target_q_values)
 
         # Optimize the model
         self.optimizer.zero_grad()
         loss.backward()
-        # In place gradient clipping
-        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
         self.optimizer.step()
-        # self.scheduler.step()
 
         return loss, q_value
            
     def update_target_network(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
-    def train_agent(self, n_episodes):
-        '''
-        Main training function for model
-        '''
+    def create_output_files(self):
         self.folder_name = f'Outputs/{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}'
         os.makedirs(self.folder_name)
         self.frame_data_file = open(self.folder_name + "/frame_data.csv", "a")
@@ -283,6 +248,12 @@ class DQNAgent(SDPPolicy):
                 "Update Target Every": self.update_target_every  
             }, parameters_file, indent=4)
 
+    def train_agent(self, n_episodes):
+        '''
+        Main training function for model
+        '''
+        self.create_output_files()
+
         total_rewards = []
         frame_num = 0
 
@@ -290,46 +261,53 @@ class DQNAgent(SDPPolicy):
         for episode in range(n_episodes):
             done = False
             total_reward = 0
-            frame_num = frame_num % self.update_target_every
             episode_duration = 0
+            frame_num = frame_num % self.update_target_every
 
             while not done:
                 frame_num += 1
                 episode_duration += 1
 
                 action_index = self.act(self.model.state)
-                self.model.step_emu(self.index_to_action_map[action_index])
+                self.model.step_emu(int(self.actions[action_index], 2))
                 exog = self.model.exog_info_fn()
                 next_state = self.model.transition_fn(exog)
                 reward = self.model.objective_fn(exog)
                 done = self.model.is_finished()
-                
-                self.remember(self.model.state, action_index, reward, next_state, done)
-                self.model.state = next_state
-                total_reward += reward
 
-                if platform.system() == "Windows" and frame_num % 4 == 0:
-                    loss, q_vals = self.replay()
-                    self.frame_data_file.write(f"{round(float(loss) * 10000, 5)},{reward},{episode},{frame_num},{self.epsilon},{0}\n")
-                    self.model.game.debug_print(f"Loss: {round(float(loss) * 10000, 5)}", clear_type="self", prepend=True)
+                if exog["Fight_Started_1_fight_started_0_between_rounds"] == 0 or self.model.fight_start is None:
+                    self.model.step_emu(int(random.choice(self.actions), 2))
+                    exog = self.model.exog_info_fn()
+                    self.model.state = self.model.transition_fn(exog)
 
-                if frame_num % self.update_target_every == 0:
-                    self.update_target_network()
-                    self.model.game.debug_print(f"Target updated {frame_num//200}", clear_type="self", prepend=True)
+                else:
+                    self.remember(self.model.state, action_index, reward, next_state, done)
+                    self.model.state = next_state
+                    total_reward += reward
 
-                if frame_num % 1200 == 0:
-                    # Update epsilon
-                    if self.epsilon > self.epsilon_min:
-                        self.epsilon *= self.epsilon_decay
-                        self.model.game.training_epsilon = round(self.epsilon, 3)
-                if done: 
-                    tot = float(total_reward)
-                    total_rewards.append(tot)
-                    with open(self.folder_name + "/episode_data.csv", "a") as self.episode_data_file:
-                        self.episode_data_file.write(f"{total_reward},{frame_num},{0}\n")
-                    self.model.game.debug_print(f"{episode}: Total reward = {round(tot, 3)} Ave of last 10: {round(sum(total_rewards[-10:])/10, 2)}, Ave first 10: {round(sum(total_rewards[:10])/10, 2)}")
-                    print(f"{episode}: Total reward = {round(tot, 3)} Ave of last 10: {round(sum(total_rewards[-10:])/10, 2)}, Ave first 10: {round(sum(total_rewards[:10])/10, 2)}")
-                    break
+                    if frame_num % 4 == 0:
+                        loss, q_vals = self.replay()
+                        self.frame_data_file.write(f"{round(float(loss) * 100000)},{reward},{episode},{episode_duration},{self.epsilon},{0}\n")
+                        self.model.game.debug_print(f"Loss: {round(float(loss) * 100000)}", clear_type="self", prepend=True)
+
+                    if frame_num % self.update_target_every == 0:
+                        self.update_target_network()
+                        self.model.game.debug_print(f"Target updated {random.random()}", clear_type="self", prepend=True)
+
+                    if frame_num % 1200 == 0:
+                        # Update epsilon
+                        if self.epsilon > self.epsilon_min:
+                            self.epsilon *= self.epsilon_decay
+                            self.model.game.training_epsilon = round(self.epsilon, 3)
+
+                    if done: 
+                        tot = float(total_reward)
+                        total_rewards.append(tot)
+                        with open(self.folder_name + "/episode_data.csv", "a") as self.episode_data_file:
+                            self.episode_data_file.write(f"{total_reward},{episode_duration},{0}\n")
+                        self.model.game.debug_print(f"{episode}: Total reward = {round(tot, 3)} Ave of last 10: {round(sum(total_rewards[-10:])/10, 2)}, Ave first 10: {round(sum(total_rewards[:10])/10, 2)}")
+                        print(f"{episode}: Total reward = {round(tot, 3)} Ave of last 10: {round(sum(total_rewards[-10:])/10, 2)}, Ave first 10: {round(sum(total_rewards[:10])/10, 2)}")
+                        break
 
             self.model.reset(reset_prng=False)
                     

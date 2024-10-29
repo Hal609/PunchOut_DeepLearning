@@ -13,12 +13,14 @@ def add_running_ave(data, column, window_width=10):
 
     return pd.concat([data, running_ave_df], axis=1)
 
-def visualise_latest(folder_name):
+def visualise_latest():
+    folder_name=sorted(os.listdir("Outputs"))[-1]
+
     sns.set_theme(style="darkgrid")
 
     frame_data = pd.read_csv(f"Outputs/{folder_name}/frame_data.csv")
-    cropped_frame_data = frame_data.loc[frame_data["loss"] > 0.3]
-    cropped_frame_data = cropped_frame_data.loc[frame_data["loss"] < 13]
+    cropped_frame_data = frame_data.loc[frame_data["loss"] > 0.0]
+    # cropped_frame_data = cropped_frame_data.loc[frame_data["loss"] < 13]
     cropped_frame_data = cropped_frame_data.reset_index(drop=True)
     episode_data = pd.read_csv(f"Outputs/{folder_name}/episode_data.csv")
 
@@ -33,11 +35,11 @@ def visualise_latest(folder_name):
     plt.show()
 
     # Loss plot
-    axes = sns.scatterplot(cropped_frame_data, x="frame_number", y="loss", marker="o", legend=False, alpha=0.3, hue="reward")
-    sns.lineplot(cropped_frame_data, x="frame_number", y="loss_running_ave", alpha=0.7)
+    sns.scatterplot(cropped_frame_data, x="frame_number", y="loss", marker="o", legend=False, alpha=0.3, hue="reward")
+    sns.lineplot(cropped_frame_data, x="frame_number" y="loss_running_ave", alpha=0.7)
     # axes.set_ylim(-1, 13)
     plt.savefig(f"Outputs/{folder_name}/loss_over_time.svg")
     plt.show()
 
 if __name__ == "__main__":
-    visualise_latest(folder_name=sorted(os.listdir("Outputs"))[-1])
+    visualise_latest()

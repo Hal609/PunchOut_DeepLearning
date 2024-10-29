@@ -91,28 +91,29 @@ class PunchOutModel(SDPModel):
         # input_count = str(decision.values()).count("1")
         # if input_count <= 2:
         #     value += 0.05
-
-        value += 500 * float(exog_info["Opponent_ID"] > self.get_state_val("Opponent_ID"))
+        if self.get_state_val("Fight_Started_1_fight_started_0_between_rounds") == 0:
+            value -= 0.001
+        value += 200 * float(exog_info["Opponent_ID"] > self.get_state_val("Opponent_ID"))
         if exog_info["Clock_Seconds"] > self.get_state_val("Clock_Seconds"):
-            value -= 0.1
+            value -= 0.01
         if exog_info["Tens_Digit_of_Score"] != self.get_state_val("Tens_Digit_of_Score"):
-            value += 10
+            value += 2
         if exog_info["Hundreds_Digit_of_Score"] > self.get_state_val("Hundreds_Digit_of_Score"):
             value += 20
         if exog_info["Thousands_Digit_of_Score"] > self.get_state_val("Thousands_Digit_of_Score"):
-            value += 100
+            value += 200
         if exog_info["Hearts_1s_place"] != self.get_state_val("Hearts_1s_place"):
-            value -= 0.5
-        if exog_info["Hearts_10s_place"] > self.get_state_val("Hearts_10s_place"):
-            value += 5
+            value -= 0.1
+        # if exog_info["Hearts_10s_place"] > self.get_state_val("Hearts_10s_place"):
+        #     value += 5
         if exog_info["Mac_Knocked_Down_Count"] > self.get_state_val("Mac_Knocked_Down_Count"):
-            value -= 20
+            value -= 100
         health_change = exog_info["Macs_Health"]*255 - self.get_state_val("Macs_Health")*255
 
         if health_change < 0:
-            value += float(1.5 * health_change)
+            value += float(2 * health_change)
 
-        scaled_reward = max(min(value / 500, 1.0), -1.0)
+        scaled_reward = max(min(value / 100, 1.0), -1.0)
         # value = value / 800
 
         self.total_reward += scaled_reward
@@ -140,9 +141,9 @@ class PunchOutModel(SDPModel):
         # self.game.inputs = decision
         self.game.step(decision)
 
-    def step(self, decision):
-        self.step_emu(decision)
+    # def step(self, decision):
+    #     self.step_emu(decision)
 
-        new_state = self.transition_fn(decision)
+    #     new_state = self.transition_fn(decision)
 
-        return new_state
+    #     return new_state

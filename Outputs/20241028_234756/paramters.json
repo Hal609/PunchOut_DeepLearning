@@ -1,0 +1,16 @@
+{
+    "Network_Structure": [
+        472,
+        256,
+        9
+    ],
+    "Learning Rate": 0.01,
+    "Optimiser": "<class 'torch.optim.adamw.AdamW'>",
+    "Max Memory Size": 8000,
+    "Gamma": 0.9,
+    "Epsilon0": 1.0,
+    "Epsilon Decay Factor": 0.91,
+    "Epsilon Min": 0.1,
+    "Batch Size": 256,
+    "Update Target Every": 5000
+}

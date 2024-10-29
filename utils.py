@@ -65,7 +65,7 @@ def compute_actions(max_simultaneous_buttons=2):
 
     # Two 1s combinations
     # two_ones =  [f"{(1 << i) | (1 << j):08b}" for i, j in combinations(range(num_bits), max_simultaneous_buttons)]
-    return single_ones + ["00010001", "00010010"]
+    return single_ones + ["01001000"]
 
 
 import sys
