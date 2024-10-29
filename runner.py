@@ -65,7 +65,8 @@ class NESWindow():
         self.debug_text = f"fps = {self.frame_rate:.0f}\n\n"
 
         self.debug_text += f"INPUT\n=====\n"
-        self.debug_text += f"{self.inputs:b}"
+        bit_text = f"{self.inputs:b}"
+        self.debug_text += "0"*(8-len(bit_text)) + bit_text
 
         self.debug_text += f"\n\nREWARDS\n======="
         self.debug_text += self.reward_view_string

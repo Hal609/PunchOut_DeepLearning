@@ -105,7 +105,7 @@ class DQNAgent(SDPPolicy):
         self.policy_net = DQN(self.network_structure).to(self.device)
         self.target_net = DQN(self.network_structure).to(self.device)  # Target network for stable training
         self.target_net.load_state_dict(self.policy_net.state_dict())
-        self.learning_rate = 0.001
+        self.learning_rate = 0.00025
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=self.learning_rate, amsgrad=True)
         # self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=10000, gamma=0.01)
         if platform.system() == "Darwin":
@@ -120,10 +120,8 @@ class DQNAgent(SDPPolicy):
         self.epsilon_decay = 0.98
         self.epsilon_min = 0.0
         self.batch_size =  512
-        self.update_target_every = 3000
+        self.update_target_every = 5000
         self.steps_done = 0
-
-        self.memory_bar = Bar('Processing', max=1000)
 
         self.frame_data_file = None
         self.episode_data_file = None
@@ -141,12 +139,9 @@ class DQNAgent(SDPPolicy):
         visualise_latest()
 
     def display_memory_progress(self):
-        # import subprocess
-        # print(subprocess.run(['ls', '-l'], stdout=subprocess.PIPE).stdout.decode('utf-8'))
-
         memory_percent = self.memory_index/self.max_memory_size * 100
         if memory_percent % 0.1 < 0.001:
-            print(f"Memory, {round(self.memory_index/self.max_memory_size * 100, 1)}% full")
+            self.model.game.debug_print(f"Memory, {round(self.memory_index/self.max_memory_size * 100, 1)}% full", clear_type="self", prepend=True)
 
     def remember(self, state, action_index, reward, next_state, done):
         self.memory[self.memory_index] = (state, action_index, reward, next_state, done)
