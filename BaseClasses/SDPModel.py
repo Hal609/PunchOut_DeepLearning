@@ -38,7 +38,7 @@ class SDPModel(ABC):
 
     def __init__(
         self,
-        state_names: list,
+        # state_names: list,
         # decision_names: list,
         S0: dict,
         t0: float = 0,
@@ -58,14 +58,14 @@ class SDPModel(ABC):
             exog_params (dict, optional): (Static) parameters to be used by the exogenuous information process.
             state_params (dict, optional): (Static) parameters to be used by the state transition function.
         """
-        self.State = namedtuple("State", state_names)
+        # self.State = namedtuple("State", state_names)
         # self.Decision = namedtuple("Decision", decision_names)
 
-        self.state_names = state_names
+        # self.state_names = state_names
         # self.decision_names = decision_names
 
-        self.initial_state = self.build_state(S0)
-        self.state = self.build_state(S0)
+        self.initial_ram_state, self.initial_pixel_state = self.build_state(S0)
+        self.ram_state, self.pixel_state = self.build_state(S0)
 
         self.objective = 0.0
         self.t0 = t0

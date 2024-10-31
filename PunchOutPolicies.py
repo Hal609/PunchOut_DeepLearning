@@ -75,16 +75,42 @@ import platform
 #gradplus
 # Define the Q-Network
 class DQN(nn.Module):
-    def __init__(self, network_structure):
+    def __init__(self, n_pixels, n_ram_values, n_outputs):
         super(DQN, self).__init__()
-        self.fc1 = nn.Linear(network_structure[0], network_structure[1])  # Input is the set of ram values
-        self.fc2 = nn.Linear(network_structure[1], network_structure[1])
-        self.fc3 = nn.Linear(network_structure[1], network_structure[2])  # Output is the Q-value for each action (RIGHT, LEFT, DOWN, UP, START, SELECT", B, A)
+        
+        # Convolutional layers for pixel data
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=2)
+        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2)
+        
+        # Calculate flattened size
+        conv_output_size = 64 * 9 * 9  # 64 channels * 9 height * 9 width = 5184
 
-    def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        return self.fc3(x)
+        # Fully connected layer for RAM values
+        self.fc_ram = nn.Linear(n_ram_values, 32) 
+        
+        # Adjust input size for fully connected layers after concatenation
+        self.fc_combined1 = nn.Linear(conv_output_size + 32, 128)  # Corrected size based on conv output and RAM layer
+        self.fc_combined2 = nn.Linear(128, 64)
+        self.fc_output = nn.Linear(64, n_outputs) 
+
+    def forward(self, ram_data, pixel_data):
+        # Convolution pathway
+        x = torch.relu(self.conv1(pixel_data))
+        x = torch.relu(self.conv2(x))
+        x = torch.relu(self.conv3(x))
+        x = x.view(x.size(0), -1)  # Flatten
+        
+        # RAM pathway
+        ram = torch.relu(self.fc_ram(ram_data))
+
+        # Combine
+        combined = torch.cat((x, ram), dim=1)
+        combined = torch.relu(self.fc_combined1(combined))
+        combined = torch.relu(self.fc_combined2(combined))
+        
+        return self.fc_output(combined)
+
 
 # Agent class for DQN
 class DQNAgent(SDPPolicy):
@@ -99,12 +125,12 @@ class DQNAgent(SDPPolicy):
         self.actions = ["00000000", "01000000", "00010000", "00001000", "00000010", "00000001", "01001000"]
 
         # Get the number of actions and observations
-        n_observations = len(model.state_names)
+        n_ram_vals = len(model.ram_state_names)
+        n_pixel_vals = len(model.pixel_state_names)
         n_actions = len(self.actions)
-        self.network_structure = [n_observations, 256, n_actions]
 
-        self.policy_net = DQN(self.network_structure).to(self.device)
-        self.target_net = DQN(self.network_structure).to(self.device)  # Target network for stable training
+        self.policy_net = DQN(n_pixel_vals, n_ram_vals, n_actions).to(self.device)
+        self.target_net = DQN(n_pixel_vals, n_ram_vals, n_actions).to(self.device)  # Target network for stable training
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.learning_rate = 0.00025
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=self.learning_rate, amsgrad=True)
@@ -120,7 +146,7 @@ class DQNAgent(SDPPolicy):
         self.epsilon = 1.0 # Exploration rate
         self.epsilon_decay = 0.98
         self.epsilon_min = 0.0
-        self.batch_size =  512
+        self.batch_size = 128
         self.update_target_every = 5000
         self.steps_done = 0
 
@@ -144,8 +170,8 @@ class DQNAgent(SDPPolicy):
         if memory_percent % 0.1 < 0.001:
             self.model.game.debug_print(f"Memory, {round(self.memory_index/self.max_memory_size * 100, 1)}% full", clear_type="self", prepend=True)
 
-    def remember(self, state, action_index, reward, next_state, done):
-        self.memory[self.memory_index] = (state, action_index, reward, next_state, done)
+    def remember(self, ram_state, pixel_state, action_index, reward, next_ram_state, next_pixel_state, done):
+        self.memory[self.memory_index] = ( ram_state, pixel_state, action_index, reward, next_ram_state, next_pixel_state, done)
 
         self.memory_index = (self.memory_index + 1) % self.max_memory_size
         self.display_memory_progress()
@@ -166,7 +192,7 @@ class DQNAgent(SDPPolicy):
 
         return action_dict
         
-    def act(self, state):
+    def act(self, ram_state, pixel_state):
         '''
         Returns an integer representing multiple simultaneous inputs based on Q-values.
         a b select start up down left right
@@ -177,7 +203,7 @@ class DQNAgent(SDPPolicy):
 
         # Exploitation: Use Q-values to make decisions
         with torch.no_grad():
-            q_values = self.policy_net(state) # Get q values for each action based on current state
+            q_values = self.policy_net(ram_state.unsqueeze(0), pixel_state) # Get q values for each action based on current state
             best_action_index = torch.argmax(q_values).item()  # Choose action with highest Q-value (exploit)
             return best_action_index
 
@@ -189,21 +215,23 @@ class DQNAgent(SDPPolicy):
 
         batch = random.sample(self.memory[:memory_size], self.batch_size)
 
-        states, actions, rewards, next_states, dones = zip(*batch)
+        ram_states, pixel_states, actions, rewards, next_ram_states, next_pixel_states, dones = zip(*batch)
 
         # Convert to tensors and move to device
-        states = torch.stack(states)
-        next_states = torch.stack(next_states)
+        ram_states = torch.stack(ram_states)
+        pixel_states = torch.stack(pixel_states).squeeze(2)  # Remove extra dimension
+        next_ram_states = torch.stack(next_ram_states)
+        next_pixel_states = torch.stack(next_pixel_states).squeeze(2)  # Remove extra dimension
         actions = torch.tensor(actions, dtype=torch.long, device=self.device).unsqueeze(1)
         rewards = torch.tensor(rewards, dtype=torch.float32, device=self.device)
         dones = torch.tensor(dones, dtype=torch.bool, device=self.device)
 
         # Compute Q-values for current states
-        q_value = self.policy_net(states).gather(1, actions)
+        q_value = self.policy_net(ram_states, pixel_states).gather(1, actions)
 
         # Compute the target Q-values for the next states using target_net
         with torch.no_grad():
-            next_q_values = self.target_net(next_states).max(1)[0]
+            next_q_values = self.target_net(next_ram_states, next_pixel_states).max(1)[0]
             target_q_values = rewards + (self.gamma * next_q_values * ~dones)
 
         # Compute loss
@@ -232,7 +260,6 @@ class DQNAgent(SDPPolicy):
 
         with open(self.folder_name + "/paramters.json", "w") as parameters_file:
             json.dump({
-                "Network_Structure": self.network_structure,
                 "Learning Rate": self.learning_rate,
                 "Optimiser": str(type(self.optimizer)),
                 "Max Memory Size":self.max_memory_size,
@@ -264,10 +291,10 @@ class DQNAgent(SDPPolicy):
                 frame_num += 1
                 episode_duration += 1
 
-                action_index = self.act(self.model.state)
+                action_index = self.act(self.model.ram_state, self.model.pixel_state)
                 self.model.step_emu(int(self.actions[action_index], 2))
                 exog = self.model.exog_info_fn()
-                next_state = self.model.transition_fn(exog)
+                next_ram_state, next_pixel_state = self.model.transition_fn(exog)
                 reward = self.model.objective_fn(exog)
                 done = self.model.is_finished()
 
@@ -277,8 +304,9 @@ class DQNAgent(SDPPolicy):
                     self.model.state = self.model.transition_fn(exog)
 
                 else:
-                    self.remember(self.model.state, action_index, reward, next_state, done)
-                    self.model.state = next_state
+                    self.remember(self.model.ram_state, self.model.pixel_state, action_index, reward, next_ram_state, next_pixel_state, done)
+                    self.model.ram_state = next_ram_state
+                    self.model.pixel_state = next_pixel_state
                     total_reward += reward
 
                     if frame_num % 4 == 0:

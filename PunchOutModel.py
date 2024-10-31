@@ -17,9 +17,10 @@ class PunchOutModel(SDPModel):
         show_debug=True
     ):
         
-        self.state_names = state_list_from_csv("ram_data_network.csv")
-        self.state_names += [f"Pixel{num}" for num in range(21*21)]
-        # decision_names = ["RIGHT", "LEFT", "DOWN", "UP", "START", "SELECT", "B", "A"]
+        # self.state_names = state_list_from_csv("ram_data_network.csv")
+        self.ram_state_names = state_list_from_csv("ram_data_network.csv")
+        self.pixel_state_names = [f"Pixel{num}" for num in range(42*42)]
+        # self.state_names += [f"Pixel{num}" for num in range(21*21)]
 
         self.current_ram = {}
         self.previous_ram = {}
@@ -33,23 +34,32 @@ class PunchOutModel(SDPModel):
         self.network_ram_dict = ram_dict_from_csv("ram_data_network.csv")
 
         S0 = {}
-        for key in self.state_names:
+        for key in self.ram_state_names:
+            S0[key] = 0
+        for key in self.pixel_state_names:
             S0[key] = 0
 
         self.total_reward = 0
 
-        super().__init__(self.state_names, S0, T, seed)
+        super().__init__(S0, T, seed)
     
     def get_state_val(self, value_string):
         return self.state[self.state_names.index(value_string)]
 
     def build_state(self, info: dict):
         # Extract state values in the correct order
-        state_values = [(info[key]) for key in self.state_names]
-        # Create tensor directly from the list of values
-        next_state = torch.tensor(state_values, dtype=torch.float32, device=global_device)
-        return next_state
-    
+        ram_state_values = [info[key] for key in self.ram_state_names]
+        pixel_state_values = [info[key] for key in self.pixel_state_names]
+        
+        # Create tensor directly from the list of values and ensure it’s on the correct device
+        next_ram_state = torch.tensor(ram_state_values, dtype=torch.float32, device=global_device)
+        
+        # Create pixel state, reshape, and move to the correct device
+        next_pixel_state = np.reshape(pixel_state_values, (42, 42))
+        next_pixel_state = torch.from_numpy(next_pixel_state).unsqueeze(0).unsqueeze(0).to(global_device)  # shape (1, 1, 42, 42)
+        
+        return next_ram_state, next_pixel_state
+
     def is_finished(self):
         """
         Check if the model is finished.
@@ -73,7 +83,10 @@ class PunchOutModel(SDPModel):
                 n += 1
 
         for key in self.network_ram_dict.keys():
-            new_state_values[key] = self.game.nes[self.network_ram_dict[key]]/255
+            if self.game.nes[self.network_ram_dict[key]] == 1:
+                new_state_values[key] = self.game.nes[self.network_ram_dict[key]]
+            else:
+                new_state_values[key] = self.game.nes[self.network_ram_dict[key]]/255
 
         for key in self.ram_dict.keys():
             new_ram_values[key] = self.game.nes[self.ram_dict[key]]/255
@@ -83,25 +96,20 @@ class PunchOutModel(SDPModel):
         return new_state_values
     
     def transition_fn(self, exog_info, decision={}):
-        # exog_info = self.exog_info_fn(decision)
-        new_state = self.build_state(exog_info)
+        new_ram_state, new_pixel_state = self.build_state(exog_info)
 
-        self.check_and_save(new_state)
+        self.check_and_save(new_ram_state)
 
-        return new_state
+        return new_ram_state, new_pixel_state
     
-    def check_and_save(self, state):
-        if state[self.state_names.index("Global_Variable_for_Enemy_Actions")] == 115/255 and self.fight_start is None:
+    def check_and_save(self, ram_state):
+        if ram_state[self.ram_state_names.index("Global_Variable_for_Enemy_Actions")] == 115/255 and self.fight_start is None:
             self.fight_start = self.game.nes.save()
 
     def objective_fn(self, exog_info, decision={}):
         value = 0
         if self.fight_start is None or self.current_ram["Fight_Started_1_fight_started_0_between_rounds"] == 0.0: return value
 
-        # Reward deliberate play i.e. not spamming the controller.
-        # input_count = str(decision.values()).count("1")
-        # if input_count <= 2:
-        #     value += 0.05
         if self.current_ram["Fight_Started_1_fight_started_0_between_rounds"] == 0:
             value -= 0.001
         value += 200 * float(self.current_ram["Opponent_ID"] > self.previous_ram["Opponent_ID"])
@@ -145,12 +153,12 @@ class PunchOutModel(SDPModel):
             self.game.nes.load(self.fight_start)
 
         self.total_reward = 0
-        self.state = self.initial_state
+        self.ram_state = self.initial_ram_state
+        self.pixel_state = self.initial_pixel_state
         self.objective = 0.0
         self.t = self.t0
 
     def step_emu(self, decision):
-        # self.game.inputs = decision
         self.game.step(decision)
 
     # def step(self, decision):
