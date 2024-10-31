@@ -55,7 +55,7 @@ class PunchOutModel(SDPModel):
         next_ram_state = torch.tensor(ram_state_values, dtype=torch.float32, device=global_device)
         
         # Create pixel state, reshape, and move to the correct device
-        next_pixel_state = np.reshape(pixel_state_values, (42, 42))
+        next_pixel_state = np.reshape(pixel_state_values, (42, 42)).astype(np.float32)
         next_pixel_state = torch.from_numpy(next_pixel_state).unsqueeze(0).unsqueeze(0).to(global_device)  # shape (1, 1, 42, 42)
         
         return next_ram_state, next_pixel_state
@@ -154,6 +154,7 @@ class PunchOutModel(SDPModel):
 
         self.total_reward = 0
         self.ram_state = self.initial_ram_state
+        self.previous_ram = self.initial_ram_state
         self.pixel_state = self.initial_pixel_state
         self.objective = 0.0
         self.t = self.t0

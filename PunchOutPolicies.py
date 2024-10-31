@@ -132,7 +132,7 @@ class DQNAgent(SDPPolicy):
         self.policy_net = DQN(n_pixel_vals, n_ram_vals, n_actions).to(self.device)
         self.target_net = DQN(n_pixel_vals, n_ram_vals, n_actions).to(self.device)  # Target network for stable training
         self.target_net.load_state_dict(self.policy_net.state_dict())
-        self.learning_rate = 0.00025
+        self.learning_rate = 0.0005
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=self.learning_rate, amsgrad=True)
         # self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=10000, gamma=0.01)
         if platform.system() == "Darwin":
@@ -144,10 +144,10 @@ class DQNAgent(SDPPolicy):
         self.memory_full = False
         self.gamma = 0.9  # Discount factor
         self.epsilon = 1.0 # Exploration rate
-        self.epsilon_decay = 0.98
-        self.epsilon_min = 0.0
+        self.epsilon_decay = 0.995
+        self.epsilon_min = 0.05
         self.batch_size = 128
-        self.update_target_every = 5000
+        self.update_target_every = 3000
         self.steps_done = 0
 
         self.frame_data_file = None
@@ -206,13 +206,17 @@ class DQNAgent(SDPPolicy):
             q_values = self.policy_net(ram_state.unsqueeze(0), pixel_state) # Get q values for each action based on current state
             best_action_index = torch.argmax(q_values).item()  # Choose action with highest Q-value (exploit)
             return best_action_index
+    # Hyperparameters
 
     def replay(self):
+        n_step = 6  # Number of frames for multi-step return
+
         memory_size = self.max_memory_size if self.memory_full else self.memory_index
 
         if memory_size < self.batch_size:
             return 0.0, None
 
+        # Sample a batch with sequences of actions and states
         batch = random.sample(self.memory[:memory_size], self.batch_size)
 
         ram_states, pixel_states, actions, rewards, next_ram_states, next_pixel_states, dones = zip(*batch)
@@ -221,31 +225,34 @@ class DQNAgent(SDPPolicy):
         ram_states = torch.stack(ram_states)
         pixel_states = torch.stack(pixel_states).squeeze(2)  # Remove extra dimension
         next_ram_states = torch.stack(next_ram_states)
-        next_pixel_states = torch.stack(next_pixel_states).squeeze(2)  # Remove extra dimension
+        next_pixel_states = torch.stack(next_pixel_states).squeeze(2)
         actions = torch.tensor(actions, dtype=torch.long, device=self.device).unsqueeze(1)
         rewards = torch.tensor(rewards, dtype=torch.float32, device=self.device)
         dones = torch.tensor(dones, dtype=torch.bool, device=self.device)
 
+        # Calculate n-step returns for more stable training
+        n_step_rewards = rewards.clone()  # Copy of original rewards tensor
+        for i in range(n_step - 1):  # For n-steps, calculate gamma-discounted reward
+            n_step_rewards[:-i-1] += self.gamma ** (i + 1) * rewards[i + 1:]
+
         # Compute Q-values for current states
         q_value = self.policy_net(ram_states, pixel_states).gather(1, actions)
 
-        # Compute the target Q-values for the next states using target_net
+        # Compute the target Q-values for the next states using target_net with n-step returns
         with torch.no_grad():
             next_q_values = self.target_net(next_ram_states, next_pixel_states).max(1)[0]
-            target_q_values = rewards + (self.gamma * next_q_values * ~dones)
+            target_q_values = n_step_rewards + (self.gamma ** n_step * next_q_values * ~dones)
 
-        # Compute loss
-        loss_func = nn.MSELoss()
+        # Compute loss and optimize
+        loss_func = nn.SmoothL1Loss()
         loss = loss_func(q_value.squeeze(1), target_q_values)
-        # loss = nn.SmoothL1Loss(q_value, target_q_values)
-
-        # Optimize the model
+        # loss = nn.MSELoss(q_value.squeeze(1), target_q_values)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
         return loss, q_value
-           
+
     def update_target_network(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
