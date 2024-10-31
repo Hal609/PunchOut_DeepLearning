@@ -39,7 +39,7 @@ class SDPModel(ABC):
     def __init__(
         self,
         state_names: list,
-        decision_names: list,
+        # decision_names: list,
         S0: dict,
         t0: float = 0,
         T: float = 1,
@@ -59,10 +59,10 @@ class SDPModel(ABC):
             state_params (dict, optional): (Static) parameters to be used by the state transition function.
         """
         self.State = namedtuple("State", state_names)
-        self.Decision = namedtuple("Decision", decision_names)
+        # self.Decision = namedtuple("Decision", decision_names)
 
         self.state_names = state_names
-        self.decision_names = decision_names
+        # self.decision_names = decision_names
 
         self.initial_state = self.build_state(S0)
         self.state = self.build_state(S0)

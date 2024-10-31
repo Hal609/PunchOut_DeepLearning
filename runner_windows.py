@@ -251,3 +251,6 @@ class NESWindowWindows():
         else:
             self.perform_inputs()
             self.frame = self.nes.step(frames=1)
+
+
+d

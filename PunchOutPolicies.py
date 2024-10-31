@@ -72,7 +72,7 @@ import os
 from visualise_run import visualise_latest
 
 import platform
-
+#gradplus
 # Define the Q-Network
 class DQN(nn.Module):
     def __init__(self, network_structure):
@@ -95,13 +95,14 @@ class DQNAgent(SDPPolicy):
         print("Using device:", self.device)
 
         # self.actions = compute_actions(max_simultaneous_buttons=2)
-        self.actions = ["00000000", "10000000", "01000000", "00100000", "00010000", "00001000", "00000010", "00000001", "01001000"]
+        # a b select start up down left right
+        self.actions = ["00000000", "01000000", "00010000", "00001000", "00000010", "00000001", "01001000"]
 
-        # Get the number of state observations
+        # Get the number of actions and observations
         n_observations = len(model.state_names)
-        # n_actions = 2**len(model.decision_names) # 2 to the power of num buttons to capture all combos of buttons
         n_actions = len(self.actions)
         self.network_structure = [n_observations, 256, n_actions]
+
         self.policy_net = DQN(self.network_structure).to(self.device)
         self.target_net = DQN(self.network_structure).to(self.device)  # Target network for stable training
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -270,7 +271,7 @@ class DQNAgent(SDPPolicy):
                 reward = self.model.objective_fn(exog)
                 done = self.model.is_finished()
 
-                if exog["Fight_Started_1_fight_started_0_between_rounds"] == 0 or self.model.fight_start is None:
+                if round(self.model.current_ram["Fight_Started_1_fight_started_0_between_rounds"]) > 1 or self.model.fight_start is None:
                     self.model.step_emu(int(random.choice(self.actions), 2))
                     exog = self.model.exog_info_fn()
                     self.model.state = self.model.transition_fn(exog)
@@ -283,7 +284,7 @@ class DQNAgent(SDPPolicy):
                     if frame_num % 4 == 0:
                         loss, q_vals = self.replay()
                         self.frame_data_file.write(f"{round(float(loss) * 100000)},{reward},{episode},{episode_duration},{self.epsilon},{0}\n")
-                        self.model.game.debug_print(f"Loss: {round(float(loss) * 100000)}", clear_type="self", prepend=True)
+                        self.model.game.debug_print(f"Loss: {round(float(loss) * 100000, 1)}", clear_type="self", prepend=True)
 
                     if frame_num % self.update_target_every == 0:
                         self.update_target_network()

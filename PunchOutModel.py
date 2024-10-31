@@ -17,16 +17,20 @@ class PunchOutModel(SDPModel):
         show_debug=True
     ):
         
-        self.state_names = state_list_from_csv("ram_data.csv")
+        self.state_names = state_list_from_csv("ram_data_network.csv")
         self.state_names += [f"Pixel{num}" for num in range(21*21)]
-        decision_names = ["RIGHT", "LEFT", "DOWN", "UP", "START", "SELECT", "B", "A"]
+        # decision_names = ["RIGHT", "LEFT", "DOWN", "UP", "START", "SELECT", "B", "A"]
 
-        self.game = NESWindow(rom_path="punch.nes", headless=headless, show_debug=show_debug)
+        self.current_ram = {}
+        self.previous_ram = {}
+
+        self.game = NESWindow(rom_path="punch.bin", headless=headless, show_debug=show_debug)
 
         self.game.setup()
 
         self.fight_start = None
         self.ram_dict = ram_dict_from_csv("ram_data.csv")
+        self.network_ram_dict = ram_dict_from_csv("ram_data_network.csv")
 
         S0 = {}
         for key in self.state_names:
@@ -34,7 +38,7 @@ class PunchOutModel(SDPModel):
 
         self.total_reward = 0
 
-        super().__init__(self.state_names, decision_names, S0, T, seed)
+        super().__init__(self.state_names, S0, T, seed)
     
     def get_state_val(self, value_string):
         return self.state[self.state_names.index(value_string)]
@@ -52,24 +56,31 @@ class PunchOutModel(SDPModel):
         Returns True if the run is finished, False otherwise.
         """
         if self.fight_start is not None:
-            if self.get_state_val("Mac_Losses") > 0: return True
-            if self.get_state_val("Mac_Knocked_Down_Count") > 0: return True
-            if self.get_state_val("Current_Round") > 1/255: return True
-            if 0 != self.get_state_val("Macs_Health") != 96/255: return True
+            if self.current_ram["Mac_Losses"] > 0: return True
+            if self.current_ram["Mac_Knocked_Down_Count"] > 0: return True
+            if self.current_ram["Current_Round"] > 1/255: return True
+            if 0 != self.current_ram["Macs_Health"] != 96/255: return True
         return False
             
     def exog_info_fn(self, decision={}):
         # Return new RAM values
-        new_values = {}
+        new_ram_values = {}
+        new_state_values = {}
         n = 0
         for pair in process_frame_buffer(self.game.frame):
             for pixel in pair:
-                new_values[f"Pixel{n}"] = pixel
+                new_state_values[f"Pixel{n}"] = pixel
                 n += 1
 
+        for key in self.network_ram_dict.keys():
+            new_state_values[key] = self.game.nes[self.network_ram_dict[key]]/255
+
         for key in self.ram_dict.keys():
-            new_values[key] = self.game.nes[self.ram_dict[key]]/255
-        return new_values
+            new_ram_values[key] = self.game.nes[self.ram_dict[key]]/255
+
+        self.previous_ram, self.current_ram = self.current_ram, new_ram_values
+
+        return new_state_values
     
     def transition_fn(self, exog_info, decision={}):
         # exog_info = self.exog_info_fn(decision)
@@ -85,30 +96,31 @@ class PunchOutModel(SDPModel):
 
     def objective_fn(self, exog_info, decision={}):
         value = 0
-        if self.fight_start is None or exog_info["Fight_Started_1_fight_started_0_between_rounds"] == 0.0: return value
+        if self.fight_start is None or self.current_ram["Fight_Started_1_fight_started_0_between_rounds"] == 0.0: return value
 
         # Reward deliberate play i.e. not spamming the controller.
         # input_count = str(decision.values()).count("1")
         # if input_count <= 2:
         #     value += 0.05
-        if self.get_state_val("Fight_Started_1_fight_started_0_between_rounds") == 0:
+        if self.current_ram["Fight_Started_1_fight_started_0_between_rounds"] == 0:
             value -= 0.001
-        value += 200 * float(exog_info["Opponent_ID"] > self.get_state_val("Opponent_ID"))
-        if exog_info["Clock_Seconds"] > self.get_state_val("Clock_Seconds"):
+        value += 200 * float(self.current_ram["Opponent_ID"] > self.previous_ram["Opponent_ID"])
+        
+        if self.current_ram["Clock_Seconds"] > self.previous_ram["Clock_Seconds"]:
             value -= 0.01
-        if exog_info["Tens_Digit_of_Score"] != self.get_state_val("Tens_Digit_of_Score"):
+        if self.current_ram["Tens_Digit_of_Score"] != self.previous_ram["Tens_Digit_of_Score"]:
             value += 2
-        if exog_info["Hundreds_Digit_of_Score"] > self.get_state_val("Hundreds_Digit_of_Score"):
+        if self.current_ram["Hundreds_Digit_of_Score"] > self.previous_ram["Hundreds_Digit_of_Score"]:
             value += 20
-        if exog_info["Thousands_Digit_of_Score"] > self.get_state_val("Thousands_Digit_of_Score"):
+        if self.current_ram["Thousands_Digit_of_Score"] > self.previous_ram["Thousands_Digit_of_Score"]:
             value += 200
-        if exog_info["Hearts_1s_place"] != self.get_state_val("Hearts_1s_place"):
+        if self.current_ram["Hearts_1s_place"] != self.previous_ram["Hearts_1s_place"]:
             value -= 0.1
         # if exog_info["Hearts_10s_place"] > self.get_state_val("Hearts_10s_place"):
         #     value += 5
-        if exog_info["Mac_Knocked_Down_Count"] > self.get_state_val("Mac_Knocked_Down_Count"):
+        if self.current_ram["Mac_Knocked_Down_Count"] > self.previous_ram["Mac_Knocked_Down_Count"]:
             value -= 100
-        health_change = exog_info["Macs_Health"]*255 - self.get_state_val("Macs_Health")*255
+        health_change = self.current_ram["Macs_Health"]*255 - self.previous_ram["Macs_Health"]*255
 
         if health_change < 0:
             value += float(2 * health_change)

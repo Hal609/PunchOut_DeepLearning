@@ -47,7 +47,7 @@ def process_frame_buffer(frame):
 
     gray_image = custom_grayscale(cropped, 0.7, 0.3, 0.0)
 
-    new_width, new_height = 21, 21
+    new_width, new_height = 42, 42
     
     resized = cv2.resize(gray_image, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
 
