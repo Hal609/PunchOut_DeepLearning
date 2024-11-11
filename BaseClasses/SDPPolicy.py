@@ -3,7 +3,6 @@ from abc import ABC, abstractmethod
 import pandas as pd
 from . import SDPModel
 import sys
-from pretty_progress import progress_bar
 
 
 class SDPPolicy(ABC):
@@ -59,7 +58,6 @@ class SDPPolicy(ABC):
         # Note: the random number generator is not reset when calling copy().
         # When calling deepcopy(), it is reset (then all iterations are exactly the same).
         for i in range(n_iterations):
-            progress_bar(i, n_iterations)
             model_copy = (self.model)
             model_copy.episode_counter = i
             model_copy.reset(reset_prng=False)

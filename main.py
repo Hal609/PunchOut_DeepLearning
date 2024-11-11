@@ -4,8 +4,6 @@ from utils import *
 
 model = PunchOutModel(headless=False, show_debug=True)
 
-random_policy = pop.RandomPatient(model=model)
-uppercut_policy = pop.SpamUppercut(model=model)
 deepq_policy = pop.DQNAgent(model=model)
 
 deepq_policy.train_agent(n_episodes=500)

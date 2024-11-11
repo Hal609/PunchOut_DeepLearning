@@ -8,61 +8,10 @@ sys.path.append("../")
 from BaseClasses.SDPModel import SDPModel
 from BaseClasses.SDPPolicy import SDPPolicy
 
-
-class RandomChoice(SDPPolicy):
-    def __init__(self, model: SDPModel, policy_name: str = "RadomChoice"):
-        super().__init__(model, policy_name)
-        
-
-    def get_decision(self, state, t, T):
-        inputs = {"RIGHT": 0, "LEFT": 0,"DOWN": 0, "UP": 0, "START": 0, "SELECT": 0, "B": 0, "A": 0}
-
-        random_int = random.randint(0, 255)
-
-        inputs = {key: (random_int >> i) & 1 for i, key in enumerate(inputs)}
-
-        return inputs
-    
-class RandomPatient(SDPPolicy):
-    def __init__(self, model: SDPModel, policy_name: str = "RadomChoice"):
-        super().__init__(model, policy_name)
-
-    def get_decision(self, state, t, T):
-        inputs = {"RIGHT": 0, "LEFT": 0,"DOWN": 0, "UP": 0, "START": 0, "SELECT": 0, "B": 0, "A": 0}
-
-        if self.model.state.Hearts_10s_place == 0\
-              and self.model.state.Hearts_1s_place <= 3\
-              and self.model.fight_start is not None \
-                  and not self.model.state.Clock_Stop_Flag:
-            random_num = random.random() 
-            if random_num < 0.05:
-                 inputs["UP"] = 1
-                 inputs["B"] = 1
-            elif random_num < 0.3:
-                inputs["RIGHT"] = 1
-            elif random_num < 0.6:
-                inputs["LEFT"] = 1
-            return inputs
-
-        inputs = {key: (random.randint(0, 255) >> i) & 1 for i, key in enumerate(inputs)}
-
-        return inputs
-    
-class SpamUppercut(SDPPolicy):
-    def __init__(self, model: SDPModel, policy_name: str = "RadomChoice"):
-        super().__init__(model, policy_name)
-
-    def get_decision(self, state, t, T):
-        if t & 2 == 0: return {"RIGHT": 0, "LEFT": 0,"DOWN": 0, "UP": 1, "START": 1, "SELECT": 0, "B": 0, "A": 1}
-        else: return {"RIGHT": 0, "LEFT": 0,"DOWN": 0, "UP": 1, "START": 0, "SELECT": 0, "B": 0, "A": 0}
-       
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
-from collections import deque
-from progress.bar import Bar
 import datetime
 import signal
 import time
@@ -75,41 +24,59 @@ import platform
 #gradplus
 # Define the Q-Network
 class DQN(nn.Module):
-    def __init__(self, n_pixels, n_ram_values, n_outputs):
+    def __init__(self,n_pixel_vals, n_ram_values, n_outputs):
         super(DQN, self).__init__()
         
-        # Convolutional layers for pixel data
-        self.conv1 = nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=2)
-        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2)
+        # Adjusted Convolutional layers for pixel data
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=5, stride=2)
+        self.relu1 = nn.ReLU()
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2)
+        self.relu2 = nn.ReLU()
+        self.conv3 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1)
+        self.relu3 = nn.ReLU()
         
-        # Calculate flattened size
-        conv_output_size = 64 * 9 * 9  # 64 channels * 9 height * 9 width = 5184
+        # Flattened size after conv layers
+        conv_output_size = 64 * 7 * 7  # 64 channels * 7 height * 7 width = 3136
 
         # Fully connected layer for RAM values
         self.fc_ram = nn.Linear(n_ram_values, 32) 
+        self.relu_fc_ram = nn.ReLU()
         
-        # Adjust input size for fully connected layers after concatenation
-        self.fc_combined1 = nn.Linear(conv_output_size + 32, 128)  # Corrected size based on conv output and RAM layer
-        self.fc_combined2 = nn.Linear(128, 64)
-        self.fc_output = nn.Linear(64, n_outputs) 
+        # Fully connected layers after concatenation
+        self.fc_combined1 = nn.Linear(conv_output_size + 32, 6400)
+        self.relu_fc1 = nn.ReLU()
+        self.fc_combined2 = nn.Linear(6400, 512)
+        self.relu_fc2 = nn.ReLU()
+        self.fc_output = nn.Linear(512, n_outputs)
 
     def forward(self, ram_data, pixel_data):
-        # Convolution pathway
+        # Convolution pathway for pixel data
         x = torch.relu(self.conv1(pixel_data))
-        x = torch.relu(self.conv2(x))
-        x = torch.relu(self.conv3(x))
-        x = x.view(x.size(0), -1)  # Flatten
+        x = self.relu1(x)
+        x = self.conv2(x)
+        x = self.relu2(x)
+        x = self.conv3(x)
+        x = self.relu3(x)
+        x = x.view(x.size(0), -1)  # Flatten (batch_size, 3136)
         
         # RAM pathway
-        ram = torch.relu(self.fc_ram(ram_data))
+        # ram = torch.relu(self.fc_ram(ram_data))  # (batch_size, 32)
+        ram = self.fc_ram(ram_data)  # (batch_size, 32)
+        ram = self.relu_fc_ram(ram)
 
         # Combine
-        combined = torch.cat((x, ram), dim=1)
-        combined = torch.relu(self.fc_combined1(combined))
-        combined = torch.relu(self.fc_combined2(combined))
+        # combined = torch.cat((x, ram), dim=1)  # (batch_size, 3168)
+        # combined = torch.relu(self.fc_combined1(combined))
+        combined = torch.cat((x, ram), dim=1)  # (batch_size, 3168)
+        combined = self.fc_combined1(combined)
+        combined = self.relu_fc1(combined)
+        combined = self.fc_combined2(combined)
+        combined = self.relu_fc2(combined)
+        output = self.fc_output(combined)
+        # Optionally, apply ReLU to the output layer
+        # output = self.relu_output(output)
         
-        return self.fc_output(combined)
+        return output
 
 
 # Agent class for DQN
@@ -132,8 +99,8 @@ class DQNAgent(SDPPolicy):
         self.policy_net = DQN(n_pixel_vals, n_ram_vals, n_actions).to(self.device)
         self.target_net = DQN(n_pixel_vals, n_ram_vals, n_actions).to(self.device)  # Target network for stable training
         self.target_net.load_state_dict(self.policy_net.state_dict())
-        self.learning_rate = 0.0005
-        self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=self.learning_rate, amsgrad=True)
+        self.learning_rate = 0.00025
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=self.learning_rate, amsgrad=True)
         # self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=10000, gamma=0.01)
         if platform.system() == "Darwin":
             self.max_memory_size = 8000
@@ -144,10 +111,10 @@ class DQNAgent(SDPPolicy):
         self.memory_full = False
         self.gamma = 0.9  # Discount factor
         self.epsilon = 1.0 # Exploration rate
-        self.epsilon_decay = 0.995
-        self.epsilon_min = 0.05
-        self.batch_size = 128
-        self.update_target_every = 3000
+        self.epsilon_decay = 0.99999975
+        self.epsilon_min = 0.1
+        self.batch_size = 32
+        self.update_target_every = 1e4
         self.steps_done = 0
 
         self.frame_data_file = None
@@ -203,13 +170,10 @@ class DQNAgent(SDPPolicy):
 
         # Exploitation: Use Q-values to make decisions
         with torch.no_grad():
-            q_values = self.policy_net(ram_state.unsqueeze(0), pixel_state) # Get q values for each action based on current state
-            best_action_index = torch.argmax(q_values).item()  # Choose action with highest Q-value (exploit)
-            return best_action_index
-    # Hyperparameters
+            return self.policy_net(ram_state.unsqueeze(0), pixel_state).max(1).indices.view(1, 1)
 
     def replay(self):
-        n_step = 6  # Number of frames for multi-step return
+        n_step = 10 # Number of frames for multi-step return
 
         memory_size = self.max_memory_size if self.memory_full else self.memory_index
 
@@ -231,30 +195,49 @@ class DQNAgent(SDPPolicy):
         dones = torch.tensor(dones, dtype=torch.bool, device=self.device)
 
         # Calculate n-step returns for more stable training
+        step_gamma = 0.95
         n_step_rewards = rewards.clone()  # Copy of original rewards tensor
-        for i in range(n_step - 1):  # For n-steps, calculate gamma-discounted reward
-            n_step_rewards[:-i-1] += self.gamma ** (i + 1) * rewards[i + 1:]
+        for i in range(1, n_step):  # For n-steps, calculate gamma-discounted reward
+            n_step_rewards[:-i] += step_gamma ** (i) * rewards[i:]
 
         # Compute Q-values for current states
-        q_value = self.policy_net(ram_states, pixel_states).gather(1, actions)
+        state_action_values = self.policy_net(ram_states, pixel_states).gather(1, actions)
 
-        # Compute the target Q-values for the next states using target_net with n-step returns
+
+        next_state_values = torch.zeros(self.batch_size, device=global_device)
         with torch.no_grad():
-            next_q_values = self.target_net(next_ram_states, next_pixel_states).max(1)[0]
-            target_q_values = n_step_rewards + (self.gamma ** n_step * next_q_values * ~dones)
+            next_state_values = self.target_net(next_ram_states, next_pixel_states).max(1).values
+        # Compute the expected Q values
+        expected_state_action_values = (next_state_values * self.gamma) + n_step_rewards
+
+        # # Compute the target Q-values for the next states using target_net with n-step returns
+        # with torch.no_grad():
+        #     next_q_values = self.target_net(next_ram_states, next_pixel_states).max(1).values
+        #     # print(next_q_values)
+        #     # print("next_q shape", next_q_values.shape)
+        # target_q_values = n_step_rewards + (self.gamma ** n_step * next_q_values * ~dones)
 
         # Compute loss and optimize
-        loss_func = nn.SmoothL1Loss()
-        loss = loss_func(q_value.squeeze(1), target_q_values)
-        # loss = nn.MSELoss(q_value.squeeze(1), target_q_values)
+        loss_func = nn.MSELoss()
+        loss = loss_func(state_action_values, expected_state_action_values.unsqueeze(1))
+        # loss = nn.SmoothL1Loss(q_value.squeeze(1), target_q_values)
         self.optimizer.zero_grad()
         loss.backward()
+        # In-place gradient clipping
+        torch.nn.utils.clip_grad_value_(self.policy_net.parameters(), 100)
         self.optimizer.step()
 
-        return loss, q_value
+        return loss
 
     def update_target_network(self):
-        self.target_net.load_state_dict(self.policy_net.state_dict())
+        TAU = 0.005
+        target_net_state_dict = self.target_net.state_dict()
+        policy_net_state_dict = self.policy_net.state_dict()
+        for key in policy_net_state_dict:
+            target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
+        self.target_net.load_state_dict(target_net_state_dict)
+
+        # self.target_net.load_state_dict(self.policy_net.state_dict())
 
     def create_output_files(self):
         self.folder_name = f'Outputs/{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}'
@@ -317,11 +300,11 @@ class DQNAgent(SDPPolicy):
                     total_reward += reward
 
                     if frame_num % 4 == 0:
-                        loss, q_vals = self.replay()
-                        self.frame_data_file.write(f"{round(float(loss) * 100000)},{reward},{episode},{episode_duration},{self.epsilon},{0}\n")
-                        self.model.game.debug_print(f"Loss: {round(float(loss) * 100000, 1)}", clear_type="self", prepend=True)
+                        loss = self.replay()
+                        # self.frame_data_file.write(f"{round(float(loss) * 100000)},{reward},{episode},{episode_duration},{self.epsilon},{0}\n")
+                        # self.model.game.debug_print(f"Loss: {round(float(loss) * 100000, 1)}", clear_type="self", prepend=True)
 
-                    if frame_num % self.update_target_every == 0:
+                    # if frame_num % self.update_target_every == 0:
                         self.update_target_network()
                         self.model.game.debug_print(f"Target updated {random.random()}", clear_type="self", prepend=True)
 

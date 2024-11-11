@@ -1,0 +1,11 @@
+{
+    "Learning Rate": 0.00025,
+    "Optimiser": "<class 'torch.optim.adam.Adam'>",
+    "Max Memory Size": 8000,
+    "Gamma": 0.9,
+    "Epsilon0": 1.0,
+    "Epsilon Decay Factor": 0.99999975,
+    "Epsilon Min": 0.1,
+    "Batch Size": 32,
+    "Update Target Every": 10000.0
+}
